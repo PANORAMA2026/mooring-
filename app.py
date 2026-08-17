@@ -221,24 +221,48 @@ elif page == "📐 Import & Parsing Schemi Banchina (Excel)":
                     st.image(img, caption=f"Layout Dettaglio Banchina #{idx+1}", use_column_width=True)
 
 # =============================================================================
-# PAGINA 4: SPECIFICHE NAVE & PILOT CARD
+# PAGINA 4: SPECIFICHE NAVE & PILOT CARD (INTERFACCIA RIDISEGNATA)
 # =============================================================================
 elif page == "⚙️ Specifiche Nave & Pilot Card":
-    st.title("⚙️ Carnival Panorama - Pilot Card & Particulars")
+    st.title("⚙️ Carnival Panorama - Particulars & Pilot Card")
+    st.caption("Specifiche tecniche principali e dati di manovrabilità della nave")
+
+    specs = st.session_state["ship_specs"]
     
-    col_p1, col_p2 = st.columns(2)
-    with col_p1:
-        st.subheader("📐 Dimensioni Principali")
-        st.json(st.session_state["ship_specs"])
-    
-    with col_p2:
+    st.subheader("📐 Dimensioni & Carenamento")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Lunghezza (LOA)", f"{specs['loa']} m")
+    col2.metric("Larghezza (Beam)", f"{specs['beam']} m")
+    col3.metric("Pescaggio (Draft)", f"{specs['draft']} m")
+    col4.metric("Altezza Max (Air Draft)", f"{specs['air_draft']} m")
+    col5.metric("Dislocamento", f"{specs['displacement']:,} T".replace(",", "."))
+
+    st.markdown("---")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.subheader("🌬️ Superfici Esposte (Wind & Current Areas)")
+        st.markdown(f"""
+        <div style="background-color: #1e222b; padding: 20px; border-radius: 8px; border: 1px solid #2e3644; font-size: 15px;">
+            <p>💨 <b>Superficie Vento Frontale:</b> {specs['wind_area_front']} m²</p>
+            <p>💨 <b>Superficie Vento Laterale:</b> {specs['wind_area_side']} m²</p>
+            <hr style="border-color: #2e3644;">
+            <p>🌊 <b>Superficie Corrente Frontale:</b> {specs['current_area_front']} m²</p>
+            <p>🌊 <b>Superficie Corrente Laterale:</b> {specs['current_area_side']} m²</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_b:
         st.subheader("🚤 Propulsione & Manovrabilità")
         st.markdown("""
-        * **Propulsione Principale:** 2x Azipod ABB V2100 (Total 37,000 kW)
-        * **Bow Thrusters:** 3x Brunvoll Transverse Thrusters (3x 2,200 kW)
-        * **Velocità Max:** 22.6 Knots
-        * **Ancore:** 2x Spek Anchors (11.5 Ton ciascuna) - 14 Lunghezze Catena
-        """)
+        <div style="background-color: #1e222b; padding: 20px; border-radius: 8px; border: 1px solid #2e3644; font-size: 15px;">
+            <p>⚡ <b>Propulsione Principale:</b> 2x Azipod ABB V2100 (Totale 37,000 kW)</p>
+            <p>🔄 <b>Bow Thrusters:</b> 3x Brunvoll Transverse Thrusters (3x 2,200 kW)</p>
+            <p>🚀 <b>Velocità Max:</b> 22.6 Nodi</p>
+            <p>⚓ <b>Ancore:</b> 2x Spek Anchors (11.5 Ton ciascuna) - 14 Lunghezze Catena</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 # =============================================================================
 # PAGINA 5: USURA CAVI, MBL & ISPEEZIONI
