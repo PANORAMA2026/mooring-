@@ -5,7 +5,6 @@ import json
 import math
 import requests
 import datetime
-import streamlit.components.v1 as components
 import folium
 from streamlit_folium import st_folium
 
@@ -66,7 +65,7 @@ berths_db = load_berths_data()
 # -----------------------------------------------------------------------------
 # 2. INIZIALIZZAZIONE SESSION STATE (MOORING STATIONS & CAVI)
 # -----------------------------------------------------------------------------
-if "ship_data" not in st.state_dict():
+if "ship_data" not in st.session_state:
     st.session_state["ship_data"] = {
         "name": "Carnival Panorama",
         "loa": 323.0,
@@ -78,7 +77,7 @@ if "ship_data" not in st.state_dict():
         "wind_side": 9500.0
     }
 
-if "mooring_lines" not in st.state_dict():
+if "mooring_lines" not in st.session_state:
     # Inizializzazione registro cavi e stazioni
     st.session_state["mooring_lines"] = pd.DataFrame([
         {"ID": "FWD-L1", "Station": "Forecastle (Prua)", "Type": "HMPE High Tech", "Winch": "Winch 1 (Port)", "Role": "Head Line", "MBL_Ton": 115, "Hours_Used": 450, "Max_Tension_Ton": 42.0, "Cert_Date": "2024-01-15"},
@@ -92,10 +91,10 @@ if "mooring_lines" not in st.state_dict():
     ])
 
 # -----------------------------------------------------------------------------
-# 3. FUNZIONI UTILI (METEO, CALCOLO NAVE SU MAPPA, USURA)
+# 3. FUNZIONI UTILI
 # -----------------------------------------------------------------------------
 def get_ship_polygon_coords(lat, lon, loa_m, beam_m, heading_deg):
-    """Calcola i vertici in coordinate geografiche della nave in scala reale."""
+    """Calcola i vertici della nave in scala reale."""
     heading_rad = math.radians(heading_deg)
     half_l = loa_m / 2.0
     half_b = beam_m / 2.0
@@ -256,7 +255,6 @@ with tab4:
     df_lines = st.session_state["mooring_lines"].copy()
     
     # Calcolo dell'Indice di Usura (Fatigue Index)
-    # Limite max ore = 1000h, Limite Tensione = 55% MBL (SWL)
     df_lines["Residual_MBL_%"] = 100 - (df_lines["Hours_Used"] / 12) - ((df_lines["Max_Tension_Ton"] / df_lines["MBL_Ton"]) * 20)
     df_lines["Residual_MBL_%"] = df_lines["Residual_MBL_%"].clip(lower=40.0, upper=100.0)
     
