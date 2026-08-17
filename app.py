@@ -23,31 +23,31 @@ DEFAULT_BERTHS = {
         "lat": 31.8578,
         "lon": -116.6258,
         "berths": {
-            "Cruise Pier North": {"heading": 210, "bollard_cap": 100, "spacing": 20, "max_draft": 10.0},
-            "Cruise Pier South": {"heading": 190, "bollard_cap": 100, "spacing": 20, "max_draft": 9.8}
+            "Cruise Pier North": {"heading": 210, "bollard_capacity_ton": 100, "bollard_spacing_m": 20, "max_draft_m": 10.0},
+            "Cruise Pier South": {"heading": 190, "bollard_capacity_ton": 100, "bollard_spacing_m": 20, "max_draft_m": 9.8}
         }
     },
     "Puerto Vallarta": {
         "lat": 20.6534,
         "lon": -105.2404,
         "berths": {
-            "Pier 1": {"heading": 180, "bollard_cap": 80, "spacing": 18, "max_draft": 9.5},
-            "Pier 2": {"heading": 180, "bollard_cap": 80, "spacing": 18, "max_draft": 9.0},
-            "Pier 3": {"heading": 180, "bollard_cap": 80, "spacing": 18, "max_draft": 9.2}
+            "Pier 1": {"heading": 180, "bollard_capacity_ton": 80, "bollard_spacing_m": 18, "max_draft_m": 9.5},
+            "Pier 2": {"heading": 180, "bollard_capacity_ton": 80, "bollard_spacing_m": 18, "max_draft_m": 9.0},
+            "Pier 3": {"heading": 180, "bollard_capacity_ton": 80, "bollard_spacing_m": 18, "max_draft_m": 9.2}
         }
     },
     "Mazatlán": {
         "lat": 23.1983,
         "lon": -106.4214,
         "berths": {
-            "Cruise Dock": {"heading": 340, "bollard_cap": 75, "spacing": 15, "max_draft": 9.2}
+            "Cruise Dock": {"heading": 340, "bollard_capacity_ton": 75, "bollard_spacing_m": 15, "max_draft_m": 9.2}
         }
     },
     "La Paz (Pichilingue)": {
         "lat": 24.2713,
         "lon": -110.3235,
         "berths": {
-            "Muelle T-Pichilingue": {"heading": 195, "bollard_cap": 80, "spacing": 15, "max_draft": 9.5}
+            "Muelle T-Pichilingue": {"heading": 195, "bollard_capacity_ton": 80, "bollard_spacing_m": 15, "max_draft_m": 9.5}
         }
     }
 }
@@ -78,7 +78,6 @@ if "ship_data" not in st.session_state:
     }
 
 if "mooring_lines" not in st.session_state:
-    # Inizializzazione registro cavi e stazioni
     st.session_state["mooring_lines"] = pd.DataFrame([
         {"ID": "FWD-L1", "Station": "Forecastle (Prua)", "Type": "HMPE High Tech", "Winch": "Winch 1 (Port)", "Role": "Head Line", "MBL_Ton": 115, "Hours_Used": 450, "Max_Tension_Ton": 42.0, "Cert_Date": "2024-01-15"},
         {"ID": "FWD-L2", "Station": "Forecastle (Prua)", "Type": "HMPE High Tech", "Winch": "Winch 2 (Stbd)", "Role": "Head Line", "MBL_Ton": 115, "Hours_Used": 450, "Max_Tension_Ton": 40.5, "Cert_Date": "2024-01-15"},
@@ -198,10 +197,12 @@ with tab3:
     port_data = berths_db[sel_port]
     berth_data = port_data["berths"][sel_berth]
     
+    # Recupero flessibile parametri banchina
+    bollard_cap = berth_data.get("bollard_capacity_ton", berth_data.get("bollard_cap", 80))
+    heading = berth_data.get("heading", 180)
+
     # Previsioni Meteo
     w_json = fetch_weather(port_data["lat"], port_data["lon"], dock_date.strftime("%Y-%m-%d"))
-    wind_sp = 15.0
-    wind_dir = 270
     if w_json and "hourly" in w_json:
         wind_sp = float(w_json["hourly"]["wind_speed_10m"][8])
         wind_dir = int(w_json["hourly"]["wind_direction_10m"][8])
@@ -222,7 +223,7 @@ with tab3:
         port_data["lon"],
         st.session_state["ship_data"]["loa"],
         st.session_state["ship_data"]["beam"],
-        berth_data["heading"]
+        heading
     )
 
     # Rendering Poligono Nave
@@ -233,13 +234,13 @@ with tab3:
         fill_color="#0088FF",
         fill_opacity=0.6,
         weight=2,
-        popup=f"<b>{st.session_state['ship_data']['name']}</b><br>LOA: {st.session_state['ship_data']['loa']}m<br>Heading: {berth_data['heading']}°"
+        popup=f"<b>{st.session_state['ship_data']['name']}</b><br>LOA: {st.session_state['ship_data']['loa']}m<br>Heading: {heading}°"
     ).add_to(m)
 
     # Marker Banchina
     folium.Marker(
         [port_data["lat"], port_data["lon"]],
-        popup=f"<b>{sel_berth}</b><br>Bitte Cap: {berth_data['bollard_cap']}t",
+        popup=f"<b>{sel_berth}</b><br>Capacità Bitte: {bollard_cap} t",
         icon=folium.Icon(color="red", icon="anchor")
     ).add_to(m)
 
@@ -254,7 +255,7 @@ with tab4:
     
     df_lines = st.session_state["mooring_lines"].copy()
     
-    # Calcolo dell'Indice di Usura (Fatigue Index)
+    # Calcolo Indice di Usura
     df_lines["Residual_MBL_%"] = 100 - (df_lines["Hours_Used"] / 12) - ((df_lines["Max_Tension_Ton"] / df_lines["MBL_Ton"]) * 20)
     df_lines["Residual_MBL_%"] = df_lines["Residual_MBL_%"].clip(lower=40.0, upper=100.0)
     
@@ -267,13 +268,11 @@ with tab4:
 
     df_lines["Stato_Cavo"] = df_lines.apply(get_status, axis=1)
 
-    # Tabella riassuntiva
     st.dataframe(
         df_lines[["ID", "Station", "Winch", "Type", "Hours_Used", "Max_Tension_Ton", "Residual_MBL_%", "Stato_Cavo"]],
         use_container_width=True
     )
     
-    # Alert Sostituzione
     critical_lines = df_lines[df_lines["Stato_Cavo"].str.contains("CRITICO")]
     if not critical_lines.empty:
         st.error(f"🚨 **Attenzione Sicurezza MEG4:** Risultano {len(critical_lines)} cavi che hanno superato il limite di usura o ore di servizio consigliate. Si raccomanda la sostituzione immediata.")
