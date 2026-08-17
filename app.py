@@ -1,13 +1,8 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import json
 import math
-import requests
-import datetime
-import folium
-from streamlit_folium import st_folium
 
 st.set_page_config(
     page_title="Mooring Management & Vessel Planner - Carnival Panorama",
@@ -16,65 +11,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 1. DATABASE PORTI & BANCHINE CON SALVATAGGIO SU FILE JSON
-# -----------------------------------------------------------------------------
-DEFAULT_BERTHS = {
-    "Ensenada": {
-        "lat": 31.85195,
-        "lon": -116.62145,
-        "berths": {
-            "Cruise Terminal (Main Pier)": {
-                "heading": 155.0,
-                "bollard_capacity_ton": 100,
-                "bollard_count": 10,
-                "bollard_spacing_m": 20.0
-            }
-        }
-    },
-    "Puerto Vallarta": {
-        "lat": 20.6534,
-        "lon": -105.2404,
-        "berths": {
-            "Pier 1": {
-                "heading": 180.0,
-                "bollard_capacity_ton": 80,
-                "bollard_count": 8,
-                "bollard_spacing_m": 18.0
-            }
-        }
-    },
-    "Mazatlán": {
-        "lat": 23.1983,
-        "lon": -106.4214,
-        "berths": {
-            "Cruise Dock": {
-                "heading": 340.0,
-                "bollard_capacity_ton": 75,
-                "bollard_count": 8,
-                "bollard_spacing_m": 15.0
-            }
-        }
-    }
-}
-
-def load_berths_data():
-    try:
-        with open("berths.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        with open("berths.json", "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_BERTHS, f, indent=4)
-        return DEFAULT_BERTHS
-
-def save_berths_data(data):
-    with open("berths.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
-
-if "berths_db" not in st.session_state:
-    st.session_state["berths_db"] = load_berths_data()
-
-# -----------------------------------------------------------------------------
-# 2. INIZIALIZZAZIONE SESSION STATE
+# 1. INIZIALIZZAZIONE SESSION STATE
 # -----------------------------------------------------------------------------
 if "ship_data" not in st.session_state:
     st.session_state["ship_data"] = {
@@ -88,11 +25,26 @@ if "ship_data" not in st.session_state:
         "wind_side": 9500.0
     }
 
-if "vessel_pos" not in st.session_state:
-    st.session_state["vessel_pos"] = {
-        "lat": 31.85195,
-        "lon": -116.62145,
-        "heading": 155.0
+if "active_berth" not in st.session_state:
+    st.session_state["active_berth"] = {
+        "info": {
+            "Porto": "Ensenada",
+            "Banchina": "Cruise Pier",
+            "Heading_Banchina": 155.0,
+            "Bordo_Affiancato": "Starboard",
+            "Pescaggio_Max": 11.0,
+            "Altezza_Banchina_SLM": 3.5
+        },
+        "bollards": pd.DataFrame([
+            {"ID_Bitta": "B1", "Posizione_M": 0.0, "SWL_Tonnellate": 100, "Note": "Prua estrema"},
+            {"ID_Bitta": "B2", "Posizione_M": 25.0, "SWL_Tonnellate": 100, "Note": "OK"},
+            {"ID_Bitta": "B3", "Posizione_M": 50.0, "SWL_Tonnellate": 100, "Note": "OK"},
+            {"ID_Bitta": "B4", "Posizione_M": 75.0, "SWL_Tonnellate": 80, "Note": "Verificare usura"},
+            {"ID_Bitta": "B5", "Posizione_M": 100.0, "SWL_Tonnellate": 100, "Note": "OK"},
+            {"ID_Bitta": "B6", "Posizione_M": 125.0, "SWL_Tonnellate": 100, "Note": "OK"},
+            {"ID_Bitta": "B7", "Posizione_M": 150.0, "SWL_Tonnellate": 100, "Note": "OK"},
+            {"ID_Bitta": "B8", "Posizione_M": 175.0, "SWL_Tonnellate": 100, "Note": "Poppa estrema"}
+        ])
     }
 
 if "mooring_lines" not in st.session_state:
@@ -108,58 +60,14 @@ if "mooring_lines" not in st.session_state:
     ])
 
 # -----------------------------------------------------------------------------
-# 3. FUNZIONI DI CALCOLO GEOMETRICO (NAVE & BITTE)
-# -----------------------------------------------------------------------------
-def get_ship_polygon_coords(lat, lon, loa_m, beam_m, heading_deg):
-    heading_rad = math.radians(heading_deg)
-    half_l = loa_m / 2.0
-    half_b = beam_m / 2.0
-    
-    local_corners = [
-        (0, half_l),
-        (half_b, half_l * 0.70),
-        (half_b, -half_l),
-        (-half_b, -half_l),
-        (-half_b, half_l * 0.70),
-        (0, half_l)
-    ]
-    
-    coords = []
-    m_per_deg_lat = 111139.0
-    m_per_deg_lon = 111139.0 * math.cos(math.radians(lat))
-    
-    for dx, dy in local_corners:
-        rot_x = dx * math.cos(heading_rad) + dy * math.sin(heading_rad)
-        rot_y = -dx * math.sin(heading_rad) + dy * math.cos(heading_rad)
-        coords.append([lat + (rot_y / m_per_deg_lat), lon + (rot_x / m_per_deg_lon)])
-        
-    return coords
-
-def generate_bollard_positions(start_lat, start_lon, heading_deg, count, spacing_m):
-    """Genera le coordinate geografiche di ogni bitta lungo l'asse della banchina."""
-    heading_rad = math.radians(heading_deg)
-    m_per_deg_lat = 111139.0
-    m_per_deg_lon = 111139.0 * math.cos(math.radians(start_lat))
-    
-    bollards = []
-    for i in range(count):
-        dist_m = i * spacing_m
-        dy = dist_m * math.cos(heading_rad)
-        dx = dist_m * math.sin(heading_rad)
-        b_lat = start_lat + (dy / m_per_deg_lat)
-        b_lon = start_lon + (dx / m_per_deg_lon)
-        bollards.append({"id": f"Bitta #{i+1}", "lat": b_lat, "lon": b_lon})
-    return bollards
-
-# -----------------------------------------------------------------------------
-# 4. ARCHITETTURA A TAB
+# 2. ARCHITETTURA A TAB
 # -----------------------------------------------------------------------------
 st.title("🚢 Carnival Panorama - Integrated Mooring System")
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "📋 Info Nave & Specifiche",
     "⚓ Stazioni di Ormeggio & Cavi",
-    "🌍 Google Earth, Bitte & Windy",
+    "📐 Layout Banchine & Bitte (da Excel)",
     "📈 Usura Cavi & Line Management"
 ])
 
@@ -186,18 +94,6 @@ with tab1:
 # =============================================================================
 with tab2:
     st.header("⚓ Configurazione Stazioni & Verricelli")
-    with st.expander("📂 Carica Registro Cavi Reale (CSV / Excel)"):
-        uploaded_file = st.file_uploader("Scegli un file CSV o XLSX:", type=["csv", "xlsx"])
-        if uploaded_file is not None:
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    st.session_state["mooring_lines"] = pd.read_csv(uploaded_file)
-                else:
-                    st.session_state["mooring_lines"] = pd.read_excel(uploaded_file)
-                st.success("Registro cavi aggiornato!")
-            except Exception as e:
-                st.error(f"Errore caricamento: {e}")
-
     st.session_state["mooring_lines"] = st.data_editor(
         st.session_state["mooring_lines"],
         num_rows="dynamic",
@@ -205,133 +101,68 @@ with tab2:
     )
 
 # =============================================================================
-# TAB 3: POSIZIONAMENTO INTERATTIVO, SALVATAGGIO BANCHINE & BITTE
+# TAB 3: LAYOUT BANCHINE & CARICAMENTO EXCEL
 # =============================================================================
 with tab3:
-    st.header("🌍 Carteggio Satellitare & Layout Banchine")
+    st.header("📐 Importazione & Registro Banchine")
     
-    col_p1, col_p2, col_p3 = st.columns(3)
-    with col_p1:
-        sel_port = st.selectbox("Seleziona Porto", list(st.session_state["berths_db"].keys()))
-    with col_p2:
-        berth_options = list(st.session_state["berths_db"][sel_port]["berths"].keys())
-        sel_berth = st.selectbox("Seleziona Banchina", berth_options)
-    with col_p3:
-        if st.button("📍 Carica Posizione Banchina Selezionata"):
-            b_data = st.session_state["berths_db"][sel_port]["berths"][sel_berth]
-            st.session_state["vessel_pos"]["lat"] = st.session_state["berths_db"][sel_port]["lat"]
-            st.session_state["vessel_pos"]["lon"] = st.session_state["berths_db"][sel_port]["lon"]
-            st.session_state["vessel_pos"]["heading"] = float(b_data.get("heading", 155.0))
-            st.rerun()
+    # Uploader file Excel per la Banchina
+    uploaded_berth_file = st.file_uploader(
+        "📂 Carica File Excel della Banchina (.xlsx)", 
+        type=["xlsx", "xls"],
+        help="Carica il file contenente le specifiche della banchina e la disposizione delle bitte."
+    )
 
-    map_provider = st.radio("Seleziona Vista Mappa:", ["Google Earth / ESRI Satellite (Posizionamento)", "Windy Live Map"], horizontal=True)
+    if uploaded_berth_file is not None:
+        try:
+            xls = pd.ExcelFile(uploaded_berth_file)
+            
+            # Lettura Foglio Info Banchina
+            if "Dati_Banchina" in xls.sheet_names:
+                df_info = pd.read_excel(xls, "Dati_Banchina")
+                st.session_state["active_berth"]["info"] = df_info.iloc[0].to_dict()
+            
+            # Lettura Foglio Bitte
+            if "Planimetria_Bitte" in xls.sheet_names:
+                df_bollards = pd.read_excel(xls, "Planimetria_Bitte")
+                st.session_state["active_berth"]["bollards"] = df_bollards
 
-    if map_provider == "Google Earth / ESRI Satellite (Posizionamento)":
-        st.info("💡 **Clicca sulla mappa** per spostare il centro della nave, oppure usa i parametri sottostanti. Una volta posizionata la nave e impostate le bitte, clicca su **'Salva Banchina in Memoria'** per non doverla più riposizionare.")
+            st.success(f"Banchina '{st.session_state['active_berth']['info'].get('Banchina', 'N/A')}' caricata con successo!")
+        except Exception as e:
+            st.error(f"Errore durante la lettura del file Excel: {e}")
 
-        current_berth_info = st.session_state["berths_db"][sel_port]["berths"][sel_berth]
+    st.markdown("---")
 
-        # Form di configurazione fine e salvataggio permanente
-        with st.expander("💾 Gestione & Salvataggio Permanente Banchina / Bitte", expanded=True):
-            col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
-            with col_cfg1:
-                st.session_state["vessel_pos"]["lat"] = st.number_input("Latitudine Nave/Banchina", value=float(st.session_state["vessel_pos"]["lat"]), format="%.6f", step=0.0001)
-                st.session_state["vessel_pos"]["lon"] = st.number_input("Longitudine Nave/Banchina", value=float(st.session_state["vessel_pos"]["lon"]), format="%.6f", step=0.0001)
-            with col_cfg2:
-                st.session_state["vessel_pos"]["heading"] = st.slider("Heading Banchina/Nave (°)", min_value=0.0, max_value=360.0, value=float(st.session_state["vessel_pos"]["heading"]), step=0.5)
-                bollard_cap = st.number_input("Capacità Bitte (Tonnellate)", value=int(current_berth_info.get("bollard_capacity_ton", 100)))
-            with col_cfg3:
-                bollard_count = st.number_input("Numero di Bitte sulla Banchina", min_value=2, max_value=30, value=int(current_berth_info.get("bollard_count", 10)))
-                bollard_spacing = st.number_input("Spaziatura tra Bitte (metri)", min_value=5.0, max_value=50.0, value=float(current_berth_info.get("bollard_spacing_m", 20.0)))
+    # Visualizzazione dati banchina attiva
+    info = st.session_state["active_berth"]["info"]
+    df_bollards = st.session_state["active_berth"]["bollards"]
 
-            save_col1, save_col2 = st.columns(2)
-            with save_col1:
-                new_berth_name = st.text_input("Nome Banchina da Salvare/Aggiornare", value=sel_berth)
-            with save_col2:
-                st.write("")
-                st.write("")
-                if st.button("💾 Salva / Aggiorna Banchina in Memoria"):
-                    # Aggiorna il database locale e scrive su berths.json
-                    st.session_state["berths_db"][sel_port]["lat"] = st.session_state["vessel_pos"]["lat"]
-                    st.session_state["berths_db"][sel_port]["lon"] = st.session_state["vessel_pos"]["lon"]
-                    st.session_state["berths_db"][sel_port]["berths"][new_berth_name] = {
-                        "heading": st.session_state["vessel_pos"]["heading"],
-                        "bollard_capacity_ton": bollard_cap,
-                        "bollard_count": bollard_count,
-                        "bollard_spacing_m": bollard_spacing
-                    }
-                    save_berths_data(st.session_state["berths_db"])
-                    st.success(f"Banchina '{new_berth_name}' salvata con successo nel file berths.json!")
+    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+    col_b1.metric("Porto", str(info.get("Porto", "-")))
+    col_b2.metric("Banchina", str(info.get("Banchina", "-")))
+    col_b3.metric("Heading (°)", f"{info.get('Heading_Banchina', 0.0)}°")
+    col_b4.metric("Bordo Affiancato", str(info.get("Bordo_Affiancato", "-")))
 
-        # Mappa Folium
-        m = folium.Map(
-            location=[st.session_state["vessel_pos"]["lat"], st.session_state["vessel_pos"]["lon"]],
-            zoom_start=18,
-            max_zoom=20,
-            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-            attr="Esri World Imagery"
+    st.subheader("📌 Registro Bitte e Capacità SWL")
+    st.session_state["active_berth"]["bollards"] = st.data_editor(
+        df_bollards,
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    # Schema Grafico Lineare (Senza Mappe Satellitari)
+    st.subheader("📐 Disposizione Lineare Bitte sulla Banchina")
+    if not df_bollards.empty and "Posizione_M" in df_bollards.columns:
+        chart_data = df_bollards.copy()
+        chart_data = chart_data.sort_values(by="Posizione_M")
+        
+        st.bar_chart(
+            chart_data,
+            x="ID_Bitta",
+            y="SWL_Tonnellate",
+            color="#0088FF",
+            use_container_width=True
         )
-
-        # 1. Rendering Poligono Nave (In scala reale)
-        ship_poly = get_ship_polygon_coords(
-            st.session_state["vessel_pos"]["lat"],
-            st.session_state["vessel_pos"]["lon"],
-            st.session_state["ship_data"]["loa"],
-            st.session_state["ship_data"]["beam"],
-            st.session_state["vessel_pos"]["heading"]
-        )
-
-        folium.Polygon(
-            locations=ship_poly,
-            color="#00EEFF",
-            fill=True,
-            fill_color="#0088FF",
-            fill_opacity=0.5,
-            weight=2,
-            popup=f"<b>{st.session_state['ship_data']['name']}</b><br>LOA: {st.session_state['ship_data']['loa']}m"
-        ).add_to(m)
-
-        # 2. Rendering Bitte Calcolate lungo la linea di banchina
-        bollards = generate_bollard_positions(
-            st.session_state["vessel_pos"]["lat"],
-            st.session_state["vessel_pos"]["lon"],
-            st.session_state["vessel_pos"]["heading"],
-            bollard_count,
-            bollard_spacing
-        )
-
-        for b in bollards:
-            folium.CircleMarker(
-                location=[b["lat"], b["lon"]],
-                radius=5,
-                color="#FF0055",
-                fill=True,
-                fill_color="#FFD700",
-                fill_opacity=0.9,
-                popup=f"<b>{b['id']}</b><br>Capacità: {bollard_cap} t"
-            ).add_to(m)
-
-        map_data = st_folium(m, width="100%", height=600, key="interactive_map")
-
-        if map_data and map_data.get("last_clicked"):
-            clicked_lat = map_data["last_clicked"]["lat"]
-            clicked_lon = map_data["last_clicked"]["lng"]
-            if (abs(clicked_lat - st.session_state["vessel_pos"]["lat"]) > 0.00001 or 
-                abs(clicked_lon - st.session_state["vessel_pos"]["lon"]) > 0.00001):
-                st.session_state["vessel_pos"]["lat"] = clicked_lat
-                st.session_state["vessel_pos"]["lon"] = clicked_lon
-                st.rerun()
-
-    else:
-        v_lat = st.session_state["vessel_pos"]["lat"]
-        v_lon = st.session_state["vessel_pos"]["lon"]
-        windy_html = f"""
-        <iframe width="100%" height="580" 
-            src="https://embed.windy.com/embed2.html?lat={v_lat}&lon={v_lon}&detailLat={v_lat}&detailLon={v_lon}&width=100%25&height=580&zoom=11&level=surface&overlay=wind&product=ecmwf&menu=&message=&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=kt&metricTemp=%C2%B0C&radarRange=-1" 
-            frameborder="0">
-        </iframe>
-        """
-        components.html(windy_html, height=590)
 
 # =============================================================================
 # TAB 4: USURA CAVI & MEG4
