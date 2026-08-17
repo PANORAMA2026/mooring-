@@ -5,206 +5,258 @@ import io
 import re
 import os
 import zipfile
-import xlrd
+import requests
 from PIL import Image
 
+try:
+    import xlrd
+except ImportError:
+    xlrd = None
+
 st.set_page_config(
-    page_title="Mooring Management & Vessel Planner - Carnival Panorama",
+    page_title="Mooring Analysis & Decision Support - Carnival Panorama",
     page_icon="🚢",
     layout="wide"
 )
 
 # -----------------------------------------------------------------------------
-# 1. FUNZIONE DI ESTRAZIONE IMMAGINI E DATI DA EXCEL (.XLS / .XLSX)
+# 1. ESTETICA & STILE
 # -----------------------------------------------------------------------------
-def extract_plan_from_excel(file_bytes, filename):
-    """Estrae metadati e disegni tecnici integrati da file Excel (.xls o .xlsx)."""
-    extracted_images = []
-    
-    # Estrazione immagini da file .xls (Legacy BIFF8 binary stream)
-    if filename.lower().endswith('.xls'):
-        content = file_bytes
-        png_matches = [m.start() for m in re.finditer(b'\x89PNG\r\n\x1a\n', content)]
-        jpg_matches = [m.start() for m in re.finditer(b'\xff\xd8\xff', content)]
-        
-        for start in png_matches:
-            end = content.find(b'IEND', start)
-            if end != -1:
-                img_data = content[start:end + 8]
-                try:
-                    img = Image.open(io.BytesIO(img_data))
-                    if img.size[0] > 200 and img.size[1] > 200: # Filtra icone/logo piccoli
-                        extracted_images.append(img)
-                except Exception:
-                    pass
-                    
-        for start in jpg_matches:
-            end = content.find(b'\xff\xd9', start)
-            if end != -1:
-                img_data = content[start:end + 2]
-                try:
-                    img = Image.open(io.BytesIO(img_data))
-                    if img.size[0] > 200 and img.size[1] > 200:
-                        extracted_images.append(img)
-                except Exception:
-                    pass
+st.markdown("""
+    <style>
+    .stApp { background-color: #0e1117; color: #faafa8; }
+    .metric-card {
+        background-color: #1e222b;
+        border: 1px solid #2e3644;
+        border-radius: 8px;
+        padding: 15px;
+        text-align: center;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-    # Estrazione immagini da file .xlsx (OpenXML ZIP)
+# -----------------------------------------------------------------------------
+# 2. INIZIALIZZAZIONE SESSION STATE
+# -----------------------------------------------------------------------------
+if "ship_specs" not in st.session_state:
+    st.session_state["ship_specs"] = {
+        "name": "Carnival Panorama",
+        "loa": 323.6,
+        "beam": 37.2,
+        "draft": 8.5,
+        "air_draft": 54.0,
+        "displacement": 69200, # Tonnellate
+        "wind_area_front": 1250, # m2
+        "wind_area_side": 8400,  # m2
+        "current_area_front": 180, # m2
+        "current_area_side": 1200 # m2
+    }
+
+if "mooring_lines_db" not in st.session_state:
+    st.session_state["mooring_lines_db"] = pd.DataFrame([
+        {"ID": "FWD-1", "Posizione": "Prua", "Ruolo": "Head Line", "MBL_Design_Ton": 115, "Ore_Uso": 320, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "29", "Stato": "🟢 Buono"},
+        {"ID": "FWD-2", "Posizione": "Prua", "Ruolo": "Head Line", "MBL_Design_Ton": 115, "Ore_Uso": 320, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "29", "Stato": "🟢 Buono"},
+        {"ID": "FWD-3", "Posizione": "Prua", "Ruolo": "Breast Line", "MBL_Design_Ton": 115, "Ore_Uso": 890, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "28", "Stato": "🟡 Monitorare"},
+        {"ID": "FWD-4", "Posizione": "Prua", "Ruolo": "Breast Line", "MBL_Design_Ton": 115, "Ore_Uso": 890, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "27", "Stato": "🟡 Monitorare"},
+        {"ID": "FWD-5", "Posizione": "Prua", "Ruolo": "Spring Line", "MBL_Design_Ton": 115, "Ore_Uso": 410, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "25", "Stato": "🟢 Buono"},
+        {"ID": "FWD-6", "Posizione": "Prua", "Ruolo": "Spring Line", "MBL_Design_Ton": 115, "Ore_Uso": 410, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "25", "Stato": "🟢 Buono"},
+        {"ID": "AFT-1", "Posizione": "Poppa", "Ruolo": "Stern Line", "MBL_Design_Ton": 110, "Ore_Uso": 1120, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "14", "Stato": "🔴 Da Sostituire"},
+        {"ID": "AFT-2", "Posizione": "Poppa", "Ruolo": "Stern Line", "MBL_Design_Ton": 110, "Ore_Uso": 1120, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "14", "Stato": "🔴 Da Sostituire"},
+        {"ID": "AFT-3", "Posizione": "Poppa", "Ruolo": "Breast Line", "MBL_Design_Ton": 110, "Ore_Uso": 650, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "16", "Stato": "🟢 Buono"},
+        {"ID": "AFT-4", "Posizione": "Poppa", "Ruolo": "Breast Line", "MBL_Design_Ton": 110, "Ore_Uso": 650, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "16", "Stato": "🟢 Buono"},
+        {"ID": "AFT-5", "Posizione": "Poppa", "Ruolo": "Spring Line", "MBL_Design_Ton": 110, "Ore_Uso": 310, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "19", "Stato": "🟢 Buono"},
+        {"ID": "AFT-6", "Posizione": "Poppa", "Ruolo": "Spring Line", "MBL_Design_Ton": 110, "Ore_Uso": 310, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "19", "Stato": "🟢 Buono"},
+    ])
+
+if "mooring_history" not in st.session_state:
+    st.session_state["mooring_history"] = pd.DataFrame([
+        {"Data": "2026-08-10", "Porto": "Ensenada", "Banchina": "Pier #1", "Vento Max (kt)": 32, "Corrente (kt)": 1.2, "Config": "6/2 FWD - 7/2 AFT", "Note": "Tensione massima su Spring 68%"},
+        {"Data": "2026-08-03", "Porto": "Ensenada", "Banchina": "Pier #2", "Vento Max (kt)": 22, "Corrente (kt)": 0.8, "Config": "6/2 FWD - 6/2 AFT", "Note": "Nessuna anomalia"},
+        {"Data": "2026-07-27", "Porto": "Cabo San Lucas", "Banchina": "Tender Bay", "Vento Max (kt)": 18, "Corrente (kt)": 0.5, "Config": "Rada", "Note": "Operazione Tender ok"},
+    ])
+
+# -----------------------------------------------------------------------------
+# 3. UTILITY FUNZIONE ESTRAZIONE EXCEL
+# -----------------------------------------------------------------------------
+def parse_excel_mooring(file_bytes, filename):
+    imgs = []
+    if filename.lower().endswith('.xls'):
+        pngs = [m.start() for m in re.finditer(b'\x89PNG\r\n\x1a\n', file_bytes)]
+        for s in pngs:
+            e = file_bytes.find(b'IEND', s)
+            if e != -1:
+                try:
+                    im = Image.open(io.BytesIO(file_bytes[s:e+8]))
+                    if im.size[0] > 180 and im.size[1] > 180: imgs.append(im)
+                except: pass
     elif filename.lower().endswith('.xlsx'):
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
                 for name in z.namelist():
                     if name.startswith('xl/media/'):
-                        img_data = z.read(name)
                         try:
-                            img = Image.open(io.BytesIO(img_data))
-                            if img.size[0] > 200 and img.size[1] > 200:
-                                extracted_images.append(img)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-
-    # Parsing Cantiere / Porto / Heading / Cavi da testo celle
-    parsed_info = {
-        "raw_title": "Piano d'Ormeggio Caricato",
-        "port": "Ensenada",
-        "pier": "Pier #2",
-        "heading": 150.0,
-        "config": "6/2",
-        "notes": [],
-        "lines_summary": []
-    }
-
-    try:
-        wb = xlrd.open_workbook(file_contents=file_bytes)
-        sheet = wb.sheet_by_index(0)
-        
-        for r in range(sheet.nrows):
-            for c in range(sheet.ncols):
-                val = str(sheet.cell_value(r, c)).strip()
-                if not val:
-                    continue
-                
-                if "HDG" in val or "Pier" in val or "Port" in val:
-                    parsed_info["raw_title"] = val
-                    hdg_m = re.search(r'HDG\s*(\d+)°?', val, re.IGNORECASE)
-                    if hdg_m:
-                        parsed_info["heading"] = float(hdg_m.group(1))
-                    pier_m = re.search(r'Pier\s*#?\s*(\w+)', val, re.IGNORECASE)
-                    if pier_m:
-                        parsed_info["pier"] = f"Pier #{pier_m.group(1)}"
-
-                if re.match(r'^\d+/\d+$', val):
-                    parsed_info["config"] = val
-                
-                if any(k in val.lower() for k in ["lines", "spring", "breast", "head", "stern"]):
-                    if val not in parsed_info["lines_summary"]:
-                        parsed_info["lines_summary"].append(val)
-                        
-                if "heaving" in val.lower() or "dk#" in val.lower():
-                    if val not in parsed_info["notes"]:
-                        parsed_info["notes"].append(val)
-    except Exception:
-        pass
-
-    return parsed_info, extracted_images
+                            im = Image.open(io.BytesIO(z.read(name)))
+                            if im.size[0] > 180 and im.size[1] > 180: imgs.append(im)
+                        except: pass
+        except: pass
+    return imgs
 
 # -----------------------------------------------------------------------------
-# 2. INIZIALIZZAZIONE SESSION STATE
+# 4. BARRA DI NAVIGAZIONE TAB PRINCIPALI
 # -----------------------------------------------------------------------------
-if "ship_data" not in st.session_state:
-    st.session_state["ship_data"] = {
-        "name": "Carnival Panorama",
-        "loa": 323.0,
-        "beam": 37.2,
-        "draft": 8.5,
-        "air_draft": 62.0,
-        "gross_tonnage": 133500
-    }
+st.sidebar.title("🚢 Navigation & Control")
+st.sidebar.markdown(f"**Vessel:** {st.session_state['ship_specs']['name']}")
+st.sidebar.markdown("**Officer:** Second Deck Navigational Officer")
 
-if "mooring_lines" not in st.session_state:
-    st.session_state["mooring_lines"] = pd.DataFrame([
-        {"ID": "FWD-L1", "Stazione": "Prua (Forecastle)", "Winch": "Winch 1 (Port)", "Ruolo": "Head Line", "Bitta_Assegnata": "Bitta 29", "MBL_Ton": 115, "Ore_Uso": 450, "Stato": "🟢 OK"},
-        {"ID": "FWD-L2", "Stazione": "Prua (Forecastle)", "Winch": "Winch 2 (Stbd)", "Ruolo": "Head Line", "Bitta_Assegnata": "Bitta 28", "MBL_Ton": 115, "Ore_Uso": 450, "Stato": "🟢 OK"},
-        {"ID": "FWD-L3", "Stazione": "Prua (Forecastle)", "Winch": "Winch 3 (Port)", "Ruolo": "Breast Line", "Bitta_Assegnata": "Bitta 27", "MBL_Ton": 115, "Ore_Uso": 820, "Stato": "🟡 Ispezionare"},
-        {"ID": "FWD-L4", "Stazione": "Prua (Forecastle)", "Winch": "Winch 4 (Stbd)", "Ruolo": "Spring Line", "Bitta_Assegnata": "Bitta 25", "MBL_Ton": 115, "Ore_Uso": 300, "Stato": "🟢 OK"},
-        {"ID": "AFT-L1", "Stazione": "Poppa (Aft Deck)", "Winch": "Winch 5 (Port)", "Ruolo": "Spring Line", "Bitta_Assegnata": "Bitta 19", "MBL_Ton": 110, "Ore_Uso": 980, "Stato": "🟡 Ispezionare"},
-        {"ID": "AFT-L2", "Stazione": "Poppa (Aft Deck)", "Winch": "Winch 6 (Stbd)", "Ruolo": "Breast Line", "Bitta_Assegnata": "Bitta 16", "MBL_Ton": 110, "Ore_Uso": 980, "Stato": "🟡 Ispezionare"},
-    ])
-
-# -----------------------------------------------------------------------------
-# 3. INTERFACCIA PRINCIPALE
-# -----------------------------------------------------------------------------
-st.title("🚢 Carnival Panorama - Integrated Mooring System")
-
-tab1, tab2, tab3 = st.tabs([
-    "📋 Info Nave & Specifiche",
-    "📐 Piani d'Ormeggio & Disegni Banchina (da Excel)",
-    "⚓ Gestione Cavi & Assegnazione Bitte"
-])
+page = st.sidebar.radio(
+    "Seleziona Modulo:",
+    [
+        "🎛️ Live Simulation & Dynamic Forces",
+        "🌀 Live Weather & Windy Integration",
+        "📐 Import & Parsing Schemi Banchina (Excel)",
+        "⚙️ Specifiche Nave & Pilot Card",
+        "📉 Usura Cavi, MBL & Ispezioni",
+        "📜 Storico Ormeggi & Logbook"
+    ]
+)
 
 # =============================================================================
-# TAB 1: INFO NAVE
+# PAGINA 1: LIVE SIMULATION & DYNAMIC FORCES (MEG4 CALCULATION)
 # =============================================================================
-with tab1:
-    st.header("🚢 Specifiche Nave")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state["ship_data"]["loa"] = st.number_input("LOA [m]", value=st.session_state["ship_data"]["loa"])
-        st.session_state["ship_data"]["beam"] = st.number_input("Beam [m]", value=st.session_state["ship_data"]["beam"])
-    with col2:
-        st.session_state["ship_data"]["draft"] = st.number_input("Draft [m]", value=st.session_state["ship_data"]["draft"])
-        st.session_state["ship_data"]["air_draft"] = st.number_input("Air Draft [m]", value=st.session_state["ship_data"]["air_draft"])
+if page == "🎛️ Live Simulation & Dynamic Forces":
+    st.title("🎛️ Simulated Mooring Forces & Recommended Arrangement")
+    st.caption("Calcolo delle forze di vento e corrente in tempo reale basato sulle linee guida OCIMF MEG4")
 
-# =============================================================================
-# TAB 2: PIANI D'ORMEGGIO EXCEL & DISEGNI ESTRATTI
-# =============================================================================
-with tab2:
-    st.header("📐 Interpretatore Disegni & Piani d'Ormeggio Excel")
+    col_env1, col_env2, col_env3 = st.columns(3)
     
-    uploaded_plan = st.file_uploader(
-        "📂 Carica Disegno Piano d'Ormeggio (.xls o .xlsx)",
-        type=["xls", "xlsx"],
-        help="Carica i file Excel contenenti i diagrammi vettoriali/immagini del piano d'ormeggio."
-    )
-
-    if uploaded_plan is not None:
-        file_bytes = uploaded_plan.read()
-        info, images = extract_plan_from_excel(file_bytes, uploaded_plan.name)
+    with col_env1:
+        st.subheader("💨 Vento Reale / Simulato")
+        wind_speed = st.slider("Velocità Vento (Nodi / Knots)", 0, 60, 28)
+        wind_dir = st.slider("Direzione Vento relativa alla nave (°)", 0, 360, 45)
         
-        st.success(f"File '{uploaded_plan.name}' interpretato correttamente!")
+    with col_env2:
+        st.subheader("🌊 Corrente")
+        curr_speed = st.slider("Velocità Corrente (Knots)", 0.0, 4.0, 1.1, step=0.1)
+        curr_dir = st.slider("Direzione Corrente relativa (°)", 0, 360, 30)
 
-        # Visualizzazione Metadati Estratti
-        st.subheader("📌 Dati Operativi Estratti dal File")
-        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-        m_col1.metric("Intestazione / Banchina", info["raw_title"])
-        m_col2.metric("Heading Banchina", f"{info['heading']}°")
-        m_col3.metric("Configurazione Cavi", info["config"])
-        m_col4.metric("Note Operative", ", ".join(info["notes"]) if info["notes"] else "Nessuna")
+    with col_env3:
+        st.subheader("⚓ Banchina & Assetto")
+        dock_side = st.selectbox("Fianco all'Ormeggio", ["Sinistra (Port Side)", "Dritta (Starboard Side)"])
+        tide_variation = st.number_input("Variazione Marea [m]", -2.0, 5.0, 1.2)
 
-        st.markdown("---")
+    # ALGORITMO MEG4 per Forze Trasversali e Longitudinali
+    rho_air = 1.225 # kg/m3
+    wind_ms = wind_speed * 0.514444
+    rad_wind = np.radians(wind_dir)
+    
+    # Forze Vento (Tonnellate)
+    front_wind_force = 0.5 * rho_air * (wind_ms**2) * st.session_state["ship_specs"]["wind_area_front"] * np.cos(rad_wind) * 0.000101972
+    side_wind_force = 0.5 * rho_air * (wind_ms**2) * st.session_state["ship_specs"]["wind_area_side"] * np.sin(rad_wind) * 0.000101972
+    
+    # Forze Corrente
+    curr_ms = curr_speed * 0.514444
+    rad_curr = np.radians(curr_dir)
+    side_curr_force = 0.5 * 1025 * (curr_ms**2) * st.session_state["ship_specs"]["current_area_side"] * np.sin(rad_curr) * 0.000101972
 
-        # Visualizzazione Disegni Tecnici Estratti dall'Excel
-        st.subheader("🖼️ Disegni Tecnici d'Ormeggio Estratti dall'Excel")
-        if images:
-            img_cols = st.columns(len(images))
-            for i, img in enumerate(images):
-                with img_cols[i]:
-                    caption = "Schema Prua (FWD)" if i == 0 else "Schema Poppa (Aft)" if i == 1 else f"Disegno #{i+1}"
-                    st.image(img, caption=caption, use_column_width=True)
-        else:
-            st.info("Nessuna immagine ad alta risoluzione trovata direttamente nell'Excel. Visualizzazione della tabella dati.")
+    total_transverse_force = abs(side_wind_force) + abs(side_curr_force)
+    total_longitudinal_force = abs(front_wind_force)
+
+    st.markdown("---")
+    st.subheader("📊 Tonnellate di Forza Risultanti sugli Ormeggi")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Spinta Trasversale Totale", f"{total_transverse_force:.1f} Ton", delta=f"{'⚠️ Alta' if total_transverse_force > 150 else 'OK'}")
+    c2.metric("Spinta Longitudinale Totale", f"{total_longitudinal_force:.1f} Ton")
+    c3.metric("Carico Stimato su Cavo Singolo", f"{(total_transverse_force/6):.1f} Ton / cavo")
+    
+    mbl_limit = 115 * 0.55 # Limit 55% MBL
+    status_limit = "🟢 Sicuro (<55% MBL)" if (total_transverse_force/6) < mbl_limit else "🚨 Rischio Sovraccarico"
+    c4.metric("Limite Sicurezza MEG4", f"{mbl_limit:.1f} Ton", delta=status_limit)
+
+    st.markdown("---")
+    st.subheader("💡 Ormeggio Consigliato in Base alle Condizioni Meteo")
+    
+    if total_transverse_force > 180:
+        st.error("🚨 **RACCOMANDAZIONE:** Configurazione Rinforzata richiesta! Utilizzare almeno **4 Head Lines, 4 Breast Lines, 2 Springs AFT/FWD**. Considerare l'uso di un rimorchiatore in assistenza se il vento supera i 35 kt.")
+    elif total_transverse_force > 100:
+        st.warning("🟡 **RACCOMANDAZIONE:** Configurazione standard **6/2** o **7/2** (3 Head Lines, 3 Breast Lines, 2 Springs FWD e AFT). Verificare il pretensionamento automatico dei verricelli.")
+    else:
+        st.success("🟢 **RACCOMANDAZIONE:** Configurazione Standard Banchina **6/2** sufficiente. Tensione bilanciata su tutti i cavi in fibra.")
 
 # =============================================================================
-# TAB 3: GESTIONE CAVI & ASSEGNAZIONE BITTE
+# PAGINA 2: LIVE WEATHER & WINDY INTEGRATION
 # =============================================================================
-with tab3:
-    st.header("⚓ Assegnazione Cavi Verricelli ➔ Bitte Banchina")
-    st.info("💡 Utilizza i numeri delle bitte identificati nei disegni di Tab 2 (es. Bitte #29, #28, #27, #25 a Prua e #19, #16 a Poppa) per configurare il piano d'ormeggio.")
+elif page == "🌀 Live Weather & Windy Integration":
+    st.title("🌀 Live Weather & Windy Radar Integration")
+    
+    col_w1, col_w2 = st.columns([1, 2])
+    with col_w1:
+        st.subheader("📍 Selezione Porto / Banchina")
+        lat = st.number_input("Latitudine", value=31.8578)
+        lon = st.number_input("Longitudine", value=-116.6258)
+        zoom = st.slider("Zoom Mappa", 3, 15, 11)
+        overlay = st.selectbox("Layer Meteo", ["wind", "waves", "currents", "clouds", "pressure"])
 
-    st.session_state["mooring_lines"] = st.data_editor(
-        st.session_state["mooring_lines"],
-        num_rows="dynamic",
-        use_container_width=True
-    )
+    with col_w2:
+        windy_html = f"""
+        <iframe width="100%" height="450" src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&detailLat={lat}&detailLon={lon}&width=650&height=450&zoom={zoom}&level=surface&overlay={overlay}&product=ecmwf&menu=&message=&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=kt&metricTemp=%C2%B0C&radarRange=-1" frameborder="0"></iframe>
+        """
+        st.components.v1.html(windy_html, height=470)
+
+# =============================================================================
+# PAGINA 3: IMPORT SCHEMI BANCHINA EXCEL
+# =============================================================================
+elif page == "📐 Import & Parsing Schemi Banchina (Excel)":
+    st.title("📐 Importatore Schemi Grafici Banchina da Excel")
+    uploaded_file = st.file_uploader("Carica il file del piano d'ormeggio (.xls / .xlsx)", type=["xls", "xlsx"])
+    
+    if uploaded_file:
+        bytes_data = uploaded_file.read()
+        imgs = parse_excel_mooring(bytes_data, uploaded_file.name)
+        st.success(f"File caricato! Estratti {len(imgs)} diagrammi ad alta risoluzione.")
+        if imgs:
+            c1, c2 = st.columns(2)
+            for idx, img in enumerate(imgs):
+                with (c1 if idx % 2 == 0 else c2):
+                    st.image(img, caption=f"Layout Dettaglio Banchina #{idx+1}", use_column_width=True)
+
+# =============================================================================
+# PAGINA 4: SPECIFICHE NAVE & PILOT CARD
+# =============================================================================
+elif page == "⚙️ Specifiche Nave & Pilot Card":
+    st.title("⚙️ Carnival Panorama - Pilot Card & Particulars")
+    
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        st.subheader("📐 Dimensioni Principali")
+        st.json(st.session_state["ship_specs"])
+    
+    with col_p2:
+        st.subheader("🚤 Propulsione & Manovrabilità")
+        st.markdown("""
+        * **Propulsione Principale:** 2x Azipod ABB V2100 (Total 37,000 kW)
+        * **Bow Thrusters:** 3x Brunvoll Transverse Thrusters (3x 2,200 kW)
+        * **Velocità Max:** 22.6 Knots
+        * **Ancore:** 2x Spek Anchors (11.5 Ton ciascuna) - 14 Lunghezze Catena
+        """)
+
+# =============================================================================
+# PAGINA 5: USURA CAVI, MBL & ISPEEZIONI
+# =============================================================================
+elif page == "📉 Usura Cavi, MBL & Ispezioni":
+    st.title("📉 Stato Usura Cavi, MBL & Certificati Linee")
+    
+    st.dataframe(st.session_state["mooring_lines_db"], use_container_width=True)
+    
+    st.markdown("---")
+    st.subheader("⚠️ Allarmi Manutenzione Cavi")
+    for idx, row in st.session_state["mooring_lines_db"].iterrows():
+        if "🔴" in row["Stato"]:
+            st.error(f"**Cavo {row['ID']} ({row['Ruolo']} - {row['Posizione']})**: Raggiunto il limite ore uso ({row['Ore_Uso']} hrs). Sostituzione raccomandata.")
+
+# =============================================================================
+# PAGINA 6: STORICO ORMEGGI & LOGBOOK
+# =============================================================================
+elif page == "📜 Storico Ormeggi & Logbook":
+    st.title("📜 Storico Operazioni di Ormeggio")
+    st.dataframe(st.session_state["mooring_history"], use_container_width=True)
