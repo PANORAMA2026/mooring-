@@ -6,89 +6,49 @@ import math
 import requests
 import datetime
 import streamlit.components.v1 as components
+import folium
+from streamlit_folium import st_folium
 
 # Configurazione della pagina
 st.set_page_config(
-    page_title="Mooring Analysis & Port Planner",
-    page_icon="⚓",
+    page_title="Mooring Management & Vessel Planner - Carnival Panorama",
+    page_icon="🚢",
     layout="wide"
 )
 
 # -----------------------------------------------------------------------------
-# 1. DATABASE BANCHINE DI DEFAULT & CARICAMENTO JSON
+# 1. DATABASE PORTI & BANCHINE
 # -----------------------------------------------------------------------------
 DEFAULT_BERTHS = {
     "Ensenada": {
         "lat": 31.8578,
         "lon": -116.6258,
         "berths": {
-            "Cruise Pier North": {
-                "heading": 210,
-                "bollard_capacity_ton": 100,
-                "bollard_spacing_m": 20,
-                "max_draft_m": 10.0,
-                "fender_type": "Cone Fender"
-            },
-            "Cruise Pier South": {
-                "heading": 190,
-                "bollard_capacity_ton": 100,
-                "bollard_spacing_m": 20,
-                "max_draft_m": 9.8,
-                "fender_type": "Cone Fender"
-            }
+            "Cruise Pier North": {"heading": 210, "bollard_cap": 100, "spacing": 20, "max_draft": 10.0},
+            "Cruise Pier South": {"heading": 190, "bollard_cap": 100, "spacing": 20, "max_draft": 9.8}
         }
     },
     "Puerto Vallarta": {
         "lat": 20.6534,
         "lon": -105.2404,
         "berths": {
-            "Pier 1": {
-                "heading": 180,
-                "bollard_capacity_ton": 80,
-                "bollard_spacing_m": 18,
-                "max_draft_m": 9.5,
-                "fender_type": "Cell Fender"
-            },
-            "Pier 2": {
-                "heading": 180,
-                "bollard_capacity_ton": 80,
-                "bollard_spacing_m": 18,
-                "max_draft_m": 9.0,
-                "fender_type": "Cell Fender"
-            },
-            "Pier 3": {
-                "heading": 180,
-                "bollard_capacity_ton": 80,
-                "bollard_spacing_m": 18,
-                "max_draft_m": 9.2,
-                "fender_type": "Cell Fender"
-            }
+            "Pier 1": {"heading": 180, "bollard_cap": 80, "spacing": 18, "max_draft": 9.5},
+            "Pier 2": {"heading": 180, "bollard_cap": 80, "spacing": 18, "max_draft": 9.0},
+            "Pier 3": {"heading": 180, "bollard_cap": 80, "spacing": 18, "max_draft": 9.2}
         }
     },
     "Mazatlán": {
         "lat": 23.1983,
         "lon": -106.4214,
         "berths": {
-            "Cruise Dock": {
-                "heading": 340,
-                "bollard_capacity_ton": 75,
-                "bollard_spacing_m": 15,
-                "max_draft_m": 9.2,
-                "fender_type": "Arch Fender"
-            }
+            "Cruise Dock": {"heading": 340, "bollard_cap": 75, "spacing": 15, "max_draft": 9.2}
         }
     },
     "La Paz (Pichilingue)": {
         "lat": 24.2713,
         "lon": -110.3235,
         "berths": {
-            "Muelle T-Pichilingue": {
-                "heading": 195,
-                "bollard_capacity_ton": 80,
-                "bollard_spacing_m": 15,
-                "max_draft_m": 9.5,
-                "fender_type": "Cell Fender"
-            }
+            "Muelle T-Pichilingue": {"heading": 195, "bollard_cap": 80, "spacing": 15, "max_draft": 9.5}
         }
     }
 }
@@ -104,161 +64,218 @@ def load_berths_data():
 berths_db = load_berths_data()
 
 # -----------------------------------------------------------------------------
-# 2. FUNZIONALITÀ DI CALCOLO E METEO
+# 2. INIZIALIZZAZIONE SESSION STATE (MOORING STATIONS & CAVI)
 # -----------------------------------------------------------------------------
-def fetch_weather_data(lat, lon, selected_date):
-    """Recupera le previsioni orarie da Open-Meteo per il giorno selezionato."""
-    date_str = selected_date.strftime("%Y-%m-%d")
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&start_date={date_str}&end_date={date_str}"
+if "ship_data" not in st.state_dict():
+    st.session_state["ship_data"] = {
+        "name": "Carnival Panorama",
+        "loa": 323.0,
+        "beam": 37.2,
+        "draft": 8.5,
+        "air_draft": 62.0,
+        "gross_tonnage": 133500,
+        "wind_front": 1200.0,
+        "wind_side": 9500.0
+    }
+
+if "mooring_lines" not in st.state_dict():
+    # Inizializzazione registro cavi e stazioni
+    st.session_state["mooring_lines"] = pd.DataFrame([
+        {"ID": "FWD-L1", "Station": "Forecastle (Prua)", "Type": "HMPE High Tech", "Winch": "Winch 1 (Port)", "Role": "Head Line", "MBL_Ton": 115, "Hours_Used": 450, "Max_Tension_Ton": 42.0, "Cert_Date": "2024-01-15"},
+        {"ID": "FWD-L2", "Station": "Forecastle (Prua)", "Type": "HMPE High Tech", "Winch": "Winch 2 (Stbd)", "Role": "Head Line", "MBL_Ton": 115, "Hours_Used": 450, "Max_Tension_Ton": 40.5, "Cert_Date": "2024-01-15"},
+        {"ID": "FWD-L3", "Station": "Forecastle (Prua)", "Type": "HMPE High Tech", "Winch": "Winch 3 (Port)", "Role": "Breast Line", "MBL_Ton": 115, "Hours_Used": 820, "Max_Tension_Ton": 68.0, "Cert_Date": "2023-06-10"},
+        {"ID": "FWD-L4", "Station": "Forecastle (Prua)", "Type": "HMPE High Tech", "Winch": "Winch 4 (Stbd)", "Role": "Spring Line", "MBL_Ton": 115, "Hours_Used": 300, "Max_Tension_Ton": 35.0, "Cert_Date": "2024-03-01"},
+        {"ID": "AFT-L1", "Station": "Poppa (Aft Station)", "Type": "Polyester Blend", "Winch": "Winch 5 (Port)", "Role": "Stern Line", "MBL_Ton": 110, "Hours_Used": 980, "Max_Tension_Ton": 72.0, "Cert_Date": "2022-11-20"},
+        {"ID": "AFT-L2", "Station": "Poppa (Aft Station)", "Type": "Polyester Blend", "Winch": "Winch 6 (Stbd)", "Role": "Stern Line", "MBL_Ton": 110, "Hours_Used": 980, "Max_Tension_Ton": 70.0, "Cert_Date": "2022-11-20"},
+        {"ID": "AFT-L3", "Station": "Poppa (Aft Station)", "Type": "Polyester Blend", "Winch": "Winch 7 (Port)", "Role": "Breast Line", "MBL_Ton": 110, "Hours_Used": 1120, "Max_Tension_Ton": 82.0, "Cert_Date": "2022-05-15"},
+        {"ID": "AFT-L4", "Station": "Poppa (Aft Station)", "Type": "Polyester Blend", "Winch": "Winch 8 (Stbd)", "Role": "Spring Line", "MBL_Ton": 110, "Hours_Used": 400, "Max_Tension_Ton": 38.0, "Cert_Date": "2024-02-10"},
+    ])
+
+# -----------------------------------------------------------------------------
+# 3. FUNZIONI UTILI (METEO, CALCOLO NAVE SU MAPPA, USURA)
+# -----------------------------------------------------------------------------
+def get_ship_polygon_coords(lat, lon, loa_m, beam_m, heading_deg):
+    """Calcola i vertici in coordinate geografiche della nave in scala reale."""
+    heading_rad = math.radians(heading_deg)
+    half_l = loa_m / 2.0
+    half_b = beam_m / 2.0
+    
+    local_corners = [
+        (0, half_l),
+        (half_b, half_l * 0.75),
+        (half_b, -half_l),
+        (-half_b, -half_l),
+        (-half_b, half_l * 0.75),
+        (0, half_l)
+    ]
+    
+    coords = []
+    m_per_deg_lat = 111139.0
+    m_per_deg_lon = 111139.0 * math.cos(math.radians(lat))
+    
+    for dx, dy in local_corners:
+        rot_x = dx * math.cos(heading_rad) + dy * math.sin(heading_rad)
+        rot_y = -dx * math.sin(heading_rad) + dy * math.cos(heading_rad)
+        coords.append([lat + (rot_y / m_per_deg_lat), lon + (rot_x / m_per_deg_lon)])
+        
+    return coords
+
+def fetch_weather(lat, lon, selected_date):
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&start_date={selected_date}&end_date={selected_date}"
     try:
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            return response.json()
+        r = requests.get(url, timeout=4).json()
+        return r
     except Exception:
-        pass
-    return None
-
-def calculate_mooring_forces(wind_speed_kt, wind_dir_deg, current_speed_kt, current_dir_deg, ship_heading_deg, A_front, A_side, A_wetted):
-    """Calcolo semplificato delle forze del vento e della corrente in tonnellate (MEG4)."""
-    V_w = wind_speed_kt * 0.514444
-    V_c = current_speed_kt * 0.514444
-    
-    rel_wind_angle = math.radians((wind_dir_deg - ship_heading_deg) % 360)
-    rel_curr_angle = math.radians((current_dir_deg - ship_heading_deg) % 360)
-    
-    rho_air = 1.225
-    rho_water = 1025.0
-    
-    Cx_w = 0.8 * math.cos(rel_wind_angle)
-    Cy_w = 0.9 * math.sin(rel_wind_angle)
-    
-    Cx_c = 0.1 * math.cos(rel_curr_angle)
-    Cy_c = 0.6 * math.sin(rel_curr_angle)
-    
-    Fx_w = 0.5 * rho_air * (V_w ** 2) * A_front * Cx_w
-    Fy_w = 0.5 * rho_air * (V_w ** 2) * A_side * Cy_w
-    
-    Fx_c = 0.5 * rho_water * (V_c ** 2) * (A_wetted * 0.1) * Cx_c
-    Fy_c = 0.5 * rho_water * (V_c ** 2) * A_wetted * Cy_c
-    
-    Fx_total_t = (Fx_w + Fx_c) / 9806.65
-    Fy_total_t = (Fy_w + Fy_c) / 9806.65
-    
-    return Fx_total_t, Fy_total_t
-
-def recommend_lines(Fx_t, Fy_t, line_mbl_t, safety_factor=0.55):
-    """Calcola la configurazione dei cavi (SWL = 55% MBL per MEG4)."""
-    swl_t = line_mbl_t * safety_factor
-    
-    abs_Fx = abs(Fx_t)
-    abs_Fy = abs(Fy_t)
-    
-    springs = max(2, math.ceil(abs_Fx / (2 * swl_t)))
-    breasts = max(2, math.ceil(abs_Fy / (2 * swl_t)))
-    head_stern = 2
-    
-    total_lines = (head_stern + breasts + springs) * 2
-    return head_stern, breasts, springs, total_lines, swl_t
+        return None
 
 # -----------------------------------------------------------------------------
-# 3. PANNELLO LATERALE (SIDEBAR)
+# 4. ARCHITETTURA A TAB (PAGINE)
 # -----------------------------------------------------------------------------
-st.sidebar.title("⚓ Parametri Ormeggio")
+st.title("🚢 Carnival Panorama - Integrated Mooring System")
 
-st.sidebar.subheader("1. Destinazione & Banchina")
-selected_port = st.sidebar.selectbox("Seleziona Porto", list(berths_db.keys()))
-port_info = berths_db[selected_port]
-berths_map = port_info["berths"]
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📋 Info Nave & Specifiche",
+    "⚓ Stazioni di Ormeggio & Cavi",
+    "🌍 Google Earth & Banchina",
+    "📈 Usura Cavi & Line Management"
+])
 
-selected_berth = st.sidebar.selectbox("Seleziona Banchina", list(berths_map.keys()))
-berth_info = berths_map[selected_berth]
-
-st.sidebar.subheader("2. Data e Ora Arrivo")
-dock_date = st.sidebar.date_input("Data ormeggio", datetime.date.today())
-dock_time = st.sidebar.time_input("Ora stimata (ETA)", datetime.time(8, 0))
-
-st.sidebar.subheader("3. Specifiche Nave & Cavi")
-ship_loa = st.sidebar.number_input("LOA (m)", value=323.0)
-ship_beam = st.sidebar.number_input("Larghezza / Beam (m)", value=37.2)
-ship_draft = st.sidebar.number_input("Pescaggio / Draft (m)", value=8.5)
-A_front = st.sidebar.number_input("Area Frontale Vento (m²)", value=1200.0)
-A_side = st.sidebar.number_input("Area Laterale Vento (m²)", value=9500.0)
-line_mbl = st.sidebar.number_input("MBL Cavo (Tonnellate)", value=115.0)
-
-# -----------------------------------------------------------------------------
-# 4. INTERFACCIA PRINCIPALE
-# -----------------------------------------------------------------------------
-st.title("🚢 Mooring Analysis & Port Planner")
-st.caption(f"Analisi di ormeggio MEG4 per **{selected_port} - {selected_berth}** | Data: **{dock_date}** ore **{dock_time.strftime('%H:%M')}**")
-
-# Tabelle Dati Banchina
-st.markdown("### 📌 Specifiche Banchina Selezionata")
-col_b1, col_b2, col_b3, col_b4 = st.columns(4)
-col_b1.metric("Orientamento Banchina", f"{berth_info['heading']}°")
-col_b2.metric("Portata Bitte", f"{berth_info['bollard_capacity_ton']} t")
-col_b3.metric("Spaziatura Bitte", f"{berth_info['bollard_spacing_m']} m")
-col_b4.metric("Pescaggio Max", f"{berth_info['max_draft_m']} m")
-
-st.divider()
-
-# Mappa Windy e Previsioni Meteo
-st.markdown("### 🌤️ Previsioni Meteo & Mappa Windy")
-
-weather_data = fetch_weather_data(port_info["lat"], port_info["lon"], dock_date)
-
-default_wind_speed = 15.0
-default_wind_dir = 270
-
-if weather_data and "hourly" in weather_data:
-    hour_idx = dock_time.hour
-    default_wind_speed = float(weather_data["hourly"]["wind_speed_10m"][hour_idx])
-    default_wind_dir = int(weather_data["hourly"]["wind_direction_10m"][hour_idx])
-    st.success(f"Dati meteo live Open-Meteo per le {dock_time.strftime('%H:%M')}: Vento **{default_wind_speed} kt** da **{default_wind_dir}°**")
-else:
-    st.info("Utilizzo valori meteo manuali (seleziona la data per il forecast automatico).")
-
-col_w1, col_w2 = st.columns([1, 1])
-
-with col_w1:
-    st.subheader("Condizioni Ambientali")
-    wind_speed = st.slider("Velocità Vento (kt)", 0.0, 60.0, default_wind_speed, 1.0)
-    wind_dir = st.slider("Direzione Vento (gradi °)", 0, 360, default_wind_dir, 5)
-    current_speed = st.slider("Velocità Corrente (kt)", 0.0, 5.0, 0.8, 0.1)
-    current_dir = st.slider("Direzione Corrente (gradi °)", 0, 360, 180, 5)
+# =============================================================================
+# TAB 1: INFO NAVE
+# =============================================================================
+with tab1:
+    st.header("🚢 Profilo Tecnico Nave")
+    col1, col2 = st.columns(2)
     
-    ship_heading = berth_info["heading"]
-    A_wetted = ship_loa * ship_draft
-    Fx, Fy = calculate_mooring_forces(wind_speed, wind_dir, current_speed, current_dir, ship_heading, A_front, A_side, A_wetted)
+    with col1:
+        st.subheader("Dati Generali")
+        st.session_state["ship_data"]["loa"] = st.number_input("LOA (Lunghezza Fuori Tutto) [m]", value=st.session_state["ship_data"]["loa"])
+        st.session_state["ship_data"]["beam"] = st.number_input("Beam (Larghezza) [m]", value=st.session_state["ship_data"]["beam"])
+        st.session_state["ship_data"]["draft"] = st.number_input("Draft (Pescaggio) [m]", value=st.session_state["ship_data"]["draft"])
+        st.session_state["ship_data"]["gross_tonnage"] = st.number_input("Gross Tonnage (GT)", value=st.session_state["ship_data"]["gross_tonnage"])
 
-with col_w2:
-    st.subheader("Mappa Vento Interattiva (Windy)")
-    windy_url = f"https://embed.windy.com/embed2.html?lat={port_info['lat']}&lon={port_info['lon']}&zoom=11&level=surface&overlay=wind&menu=&message=true&marker=true&forecast=12&type=map&location=coordinates&detail=true&metricWind=kt&metricTemp=%C2%B0C"
-    components.iframe(windy_url, height=380, scrolling=False)
+    with col2:
+        st.subheader("Superfici Esposte al Vento (MEG4)")
+        st.session_state["ship_data"]["wind_front"] = st.number_input("Area Vento Frontale [m²]", value=st.session_state["ship_data"]["wind_front"])
+        st.session_state["ship_data"]["wind_side"] = st.number_input("Area Vento Laterale [m²]", value=st.session_state["ship_data"]["wind_side"])
+        st.session_state["ship_data"]["air_draft"] = st.number_input("Air Draft [m]", value=st.session_state["ship_data"]["air_draft"])
 
-st.divider()
+# =============================================================================
+# TAB 2: STAZIONI DI ORMEGGIO & CAVI INTERATTIVI
+# =============================================================================
+with tab2:
+    st.header("⚓ Configurazione Stazioni & Verricelli (Winch)")
+    st.caption("Modifica le posizioni dei cavi, i verricelli assegnati e il tipo di fibra. I cambiamenti aggiorneranno l'analisi in tempo reale.")
+    
+    edited_df = st.data_editor(
+        st.session_state["mooring_lines"],
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Station": st.column_config.SelectboxColumn("Stazione", options=["Forecastle (Prua)", "Poppa (Aft Station)"]),
+            "Type": st.column_config.SelectboxColumn("Tipo Cavo", options=["HMPE High Tech", "Polyester Blend", "Polypropylene", "Steel Wire"]),
+            "Role": st.column_config.SelectboxColumn("Ruolo Cavo", options=["Head Line", "Stern Line", "Breast Line", "Spring Line"]),
+            "MBL_Ton": st.column_config.NumberColumn("MBL (Tonnellate)", min_value=50, max_value=250),
+            "Hours_Used": st.column_config.NumberColumn("Ore di Servizio", min_value=0),
+            "Max_Tension_Ton": st.column_config.NumberColumn("Picco Tensione Registrata (t)")
+        }
+    )
+    st.session_state["mooring_lines"] = edited_df
 
-# Risultati Forze e Raccomandazione Cavi
-st.markdown("### 📊 Risultati Analisi Forze & Configurazione Cavi Ottimale")
+# =============================================================================
+# TAB 3: GOOGLE EARTH & NAVE IN SCALA
+# =============================================================================
+with tab3:
+    st.header("🌍 Mappa Satellitare Banchina (Google Earth Style)")
+    
+    col_p1, col_p2, col_p3 = st.columns(3)
+    with col_p1:
+        sel_port = st.selectbox("Porto", list(berths_db.keys()))
+    with col_p2:
+        sel_berth = st.selectbox("Banchina", list(berths_db[sel_port]["berths"].keys()))
+    with col_p3:
+        dock_date = st.date_input("Data Arrivo", datetime.date.today())
+        
+    port_data = berths_db[sel_port]
+    berth_data = port_data["berths"][sel_berth]
+    
+    # Previsioni Meteo
+    w_json = fetch_weather(port_data["lat"], port_data["lon"], dock_date.strftime("%Y-%m-%d"))
+    wind_sp = 15.0
+    wind_dir = 270
+    if w_json and "hourly" in w_json:
+        wind_sp = float(w_json["hourly"]["wind_speed_10m"][8])
+        wind_dir = int(w_json["hourly"]["wind_direction_10m"][8])
+        st.success(f"Meteo previsto per il {dock_date}: Vento **{wind_sp} kt** da **{wind_dir}°**")
 
-head_s, breasts, springs, total_lines, swl_t = recommend_lines(Fx, Fy, line_mbl)
+    # Mappa Folium con layer satellitare ESRI World Imagery
+    m = folium.Map(
+        location=[port_data["lat"], port_data["lon"]],
+        zoom_start=17,
+        max_zoom=20,
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri World Imagery"
+    )
 
-col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-col_r1.metric("Forza Longitudinale ($F_x$)", f"{Fx:.1f} t", help="Spinta avanti/indietro lungo banchina")
-col_r2.metric("Forza Trasversale ($F_y$)", f"{Fy:.1f} t", help="Spinta perpendicolare alla banchina")
-col_r3.metric("SWL Cavo (55% MBL)", f"{swl_t:.1f} t")
-col_r4.metric("Totale Cavi Consigliati", f"{total_lines} cavi")
+    # Calcolo coordinate nave in scala
+    ship_poly = get_ship_polygon_coords(
+        port_data["lat"],
+        port_data["lon"],
+        st.session_state["ship_data"]["loa"],
+        st.session_state["ship_data"]["beam"],
+        berth_data["heading"]
+    )
 
-st.markdown("#### ⚓ Schema di Ormeggio Raccomandato (MEG4)")
-col_c1, col_c2, col_c3 = st.columns(3)
+    # Rendering Poligono Nave
+    folium.Polygon(
+        locations=ship_poly,
+        color="#00EEFF",
+        fill=True,
+        fill_color="#0088FF",
+        fill_opacity=0.6,
+        weight=2,
+        popup=f"<b>{st.session_state['ship_data']['name']}</b><br>LOA: {st.session_state['ship_data']['loa']}m<br>Heading: {berth_data['heading']}°"
+    ).add_to(m)
 
-with col_c1:
-    st.info(f"**Head / Stern Lines**\n\n**{head_s}** a prua / **{head_s}** a poppa\n\n*(Totale: {head_s * 2})*")
+    # Marker Banchina
+    folium.Marker(
+        [port_data["lat"], port_data["lon"]],
+        popup=f"<b>{sel_berth}</b><br>Bitte Cap: {berth_data['bollard_cap']}t",
+        icon=folium.Icon(color="red", icon="anchor")
+    ).add_to(m)
 
-with col_c2:
-    st.info(f"**Breast Lines**\n\n**{breasts}** a prua / **{breasts}** a poppa\n\n*(Totale: {breasts * 2})*")
+    st_folium(m, width="100%", height=500)
 
-with col_c3:
-    st.info(f"**Spring Lines**\n\n**{springs}** avanti / **{springs}** indietro\n\n*(Totale: {springs * 2})*")
+# =============================================================================
+# TAB 4: USURA CAVI & LINE MANAGEMENT PLAN (MEG4)
+# =============================================================================
+with tab4:
+    st.header("📈 Usura Cavi & Line Management Plan (MEG4)")
+    st.caption("Monitoraggio dello stato di salute, tensione massima registrata e calcolo della resistenza residua del cavo.")
+    
+    df_lines = st.session_state["mooring_lines"].copy()
+    
+    # Calcolo dell'Indice di Usura (Fatigue Index)
+    # Limite max ore = 1000h, Limite Tensione = 55% MBL (SWL)
+    df_lines["Residual_MBL_%"] = 100 - (df_lines["Hours_Used"] / 12) - ((df_lines["Max_Tension_Ton"] / df_lines["MBL_Ton"]) * 20)
+    df_lines["Residual_MBL_%"] = df_lines["Residual_MBL_%"].clip(lower=40.0, upper=100.0)
+    
+    def get_status(row):
+        if row["Residual_MBL_%"] < 75.0 or row["Hours_Used"] > 1000:
+            return "🔴 CRITICO (Sostituire)"
+        elif row["Residual_MBL_%"] < 85.0 or row["Hours_Used"] > 750:
+            return "🟡 ATTENZIONE (Ispezionare)"
+        return "🟢 OTTIMO"
 
-if abs(Fy) > (berth_info['bollard_capacity_ton'] * breasts):
-    st.warning("⚠️ Attenzione: La forza trasversale calcolata supera la capacità nominale delle bitte selezionate. Si raccomanda di raddoppiare i cavi di Breast o rinforzare l'ormeggio.")
+    df_lines["Stato_Cavo"] = df_lines.apply(get_status, axis=1)
+
+    # Tabella riassuntiva
+    st.dataframe(
+        df_lines[["ID", "Station", "Winch", "Type", "Hours_Used", "Max_Tension_Ton", "Residual_MBL_%", "Stato_Cavo"]],
+        use_container_width=True
+    )
+    
+    # Alert Sostituzione
+    critical_lines = df_lines[df_lines["Stato_Cavo"].str.contains("CRITICO")]
+    if not critical_lines.empty:
+        st.error(f"🚨 **Attenzione Sicurezza MEG4:** Risultano {len(critical_lines)} cavi che hanno superato il limite di usura o ore di servizio consigliate. Si raccomanda la sostituzione immediata.")
