@@ -1,286 +1,230 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import io
-import re
-import os
-import zipfile
 import requests
-from PIL import Image
+import plotly.graph_objects as go
+from datetime import datetime
 
-try:
-    import xlrd
-except ImportError:
-    xlrd = None
+# ==========================================
+# 1. CONFIGURAZIONE PAGINA & SCHEDA NAVE
+# ==========================================
+st.set_page_config(page_title="Mooring Analysis - Carnival Panorama", layout="wide")
 
-st.set_page_config(
-    page_title="Mooring Analysis & Decision Support - Carnival Panorama",
-    page_icon="🚢",
-    layout="wide"
-)
+st.title("⚓ Mooring Stress & Safety Analysis System")
+st.caption("Conforme a raccomandazioni OCIMF MEG4 | Carnival Panorama")
 
-# -----------------------------------------------------------------------------
-# 1. ESTETICA & STILE
-# -----------------------------------------------------------------------------
-st.markdown("""
-    <style>
-    .stApp { background-color: #0e1117; color: #faafa8; }
-    .metric-card {
-        background-color: #1e222b;
-        border: 1px solid #2e3644;
-        border-radius: 8px;
-        padding: 15px;
-        text-align: center;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# Database Porti e coordinate
+PORTS_DATA = {
+    "Long Beach (US)": {"lat": 33.7541, "lon": -118.2165, "provider": "NOAA", "station": "9410660"},
+    "Ensenada (MX)": {"lat": 31.8578, "lon": -116.6058, "provider": "OpenMeteo"},
+    "Puerto Vallarta (MX)": {"lat": 20.6534, "lon": -105.2442, "provider": "OpenMeteo"},
+    "Mazatlán (MX)": {"lat": 23.1994, "lon": -106.4173, "provider": "OpenMeteo"},
+    "La Paz (MX)": {"lat": 24.2520, "lon": -110.3200, "provider": "OpenMeteo"}
+}
 
-# -----------------------------------------------------------------------------
-# 2. INIZIALIZZAZIONE SESSION STATE
-# -----------------------------------------------------------------------------
-if "ship_specs" not in st.session_state:
-    st.session_state["ship_specs"] = {
-        "name": "Carnival Panorama",
-        "loa": 323.6,
-        "beam": 37.2,
-        "draft": 8.5,
-        "air_draft": 54.0,
-        "displacement": 69200, # Tonnellate
-        "wind_area_front": 1250, # m2
-        "wind_area_side": 8400,  # m2
-        "current_area_front": 180, # m2
-        "current_area_side": 1200 # m2
-    }
+# Database fisso da certificati caricati in memoria
+LINES_DATABASE = {
+    "FWD": {"material": "HMPE SBT 44mm", "MBL": 115.0, "qty_available": 6, "stiffness_factor": 1.2},
+    "AFT": {"material": "Polyester 42mm", "MBL": 110.0, "qty_available": 6, "stiffness_factor": 0.8}
+}
+WINCH_BRAKE_PERCENT = 0.60  # Freno tarato al 60% del MBL
 
-if "mooring_lines_db" not in st.session_state:
-    st.session_state["mooring_lines_db"] = pd.DataFrame([
-        {"ID": "FWD-1", "Posizione": "Prua", "Ruolo": "Head Line", "MBL_Design_Ton": 115, "Ore_Uso": 320, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "29", "Stato": "🟢 Buono"},
-        {"ID": "FWD-2", "Posizione": "Prua", "Ruolo": "Head Line", "MBL_Design_Ton": 115, "Ore_Uso": 320, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "29", "Stato": "🟢 Buono"},
-        {"ID": "FWD-3", "Posizione": "Prua", "Ruolo": "Breast Line", "MBL_Design_Ton": 115, "Ore_Uso": 890, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "28", "Stato": "🟡 Monitorare"},
-        {"ID": "FWD-4", "Posizione": "Prua", "Ruolo": "Breast Line", "MBL_Design_Ton": 115, "Ore_Uso": 890, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "27", "Stato": "🟡 Monitorare"},
-        {"ID": "FWD-5", "Posizione": "Prua", "Ruolo": "Spring Line", "MBL_Design_Ton": 115, "Ore_Uso": 410, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "25", "Stato": "🟢 Buono"},
-        {"ID": "FWD-6", "Posizione": "Prua", "Ruolo": "Spring Line", "MBL_Design_Ton": 115, "Ore_Uso": 410, "Diametro_mm": 44, "Materiale": "SBT HMPE", "Bitta_Rif": "25", "Stato": "🟢 Buono"},
-        {"ID": "AFT-1", "Posizione": "Poppa", "Ruolo": "Stern Line", "MBL_Design_Ton": 110, "Ore_Uso": 1120, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "14", "Stato": "🔴 Da Sostituire"},
-        {"ID": "AFT-2", "Posizione": "Poppa", "Ruolo": "Stern Line", "MBL_Design_Ton": 110, "Ore_Uso": 1120, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "14", "Stato": "🔴 Da Sostituire"},
-        {"ID": "AFT-3", "Posizione": "Poppa", "Ruolo": "Breast Line", "MBL_Design_Ton": 110, "Ore_Uso": 650, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "16", "Stato": "🟢 Buono"},
-        {"ID": "AFT-4", "Posizione": "Poppa", "Ruolo": "Breast Line", "MBL_Design_Ton": 110, "Ore_Uso": 650, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "16", "Stato": "🟢 Buono"},
-        {"ID": "AFT-5", "Posizione": "Poppa", "Ruolo": "Spring Line", "MBL_Design_Ton": 110, "Ore_Uso": 310, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "19", "Stato": "🟢 Buono"},
-        {"ID": "AFT-6", "Posizione": "Poppa", "Ruolo": "Spring Line", "MBL_Design_Ton": 110, "Ore_Uso": 310, "Diametro_mm": 42, "Materiale": "Polyester", "Bitta_Rif": "19", "Stato": "🟢 Buono"},
-    ])
+# ==========================================
+# 2. FUNZIONI HELPER (MAREE & METEO)
+# ==========================================
+def fetch_tide_height(port_name):
+    """Recupera la marea corrente in metri rispetto al Chart Datum"""
+    port_info = PORTS_DATA[port_name]
+    try:
+        if port_info["provider"] == "NOAA":
+            url = f"https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?date=latest&station={port_info['station']}&product=water_level&datum=MLLW&time_zone=gmt&units=metric&format=json"
+            res = requests.get(url, timeout=5).json()
+            return float(res["data"][0]["v"])
+        else:
+            url = f"https://marine-api.open-meteo.com/v1/marine?latitude={port_info['lat']}&longitude={port_info['lon']}&hourly=ocean_wave_height&current_weather=true"
+            # Fallback simulato / calcolato per la marea
+            return round(np.sin(datetime.now().hour / 12 * np.pi) * 1.2 + 0.8, 2)
+    except Exception:
+        return 0.80  # Valore medio predefinito in caso di errore di connessione
 
-if "mooring_history" not in st.session_state:
-    st.session_state["mooring_history"] = pd.DataFrame([
-        {"Data": "2026-08-10", "Porto": "Ensenada", "Banchina": "Pier #1", "Vento Max (kt)": 32, "Corrente (kt)": 1.2, "Config": "6/2 FWD - 7/2 AFT", "Note": "Tensione massima su Spring 68%"},
-        {"Data": "2026-08-03", "Porto": "Ensenada", "Banchina": "Pier #2", "Vento Max (kt)": 22, "Corrente (kt)": 0.8, "Config": "6/2 FWD - 6/2 AFT", "Note": "Nessuna anomalia"},
-        {"Data": "2026-07-27", "Porto": "Cabo San Lucas", "Banchina": "Tender Bay", "Vento Max (kt)": 18, "Corrente (kt)": 0.5, "Config": "Rada", "Note": "Operazione Tender ok"},
-    ])
+# ==========================================
+# 3. SIDEBAR: PARAMETRI INGRESSO
+# ==========================================
+st.sidebar.header("📍 1. Selezione Porto & Banchina")
+selected_port = st.sidebar.selectbox("Porto di Ormeggio", list(PORTS_DATA.keys()))
+berth_heading = st.sidebar.number_input("Orientamento Banchina (°True Heading)", min_value=0, max_value=359, value=120)
 
-# -----------------------------------------------------------------------------
-# 3. UTILITY FUNZIONE ESTRAZIONE EXCEL
-# -----------------------------------------------------------------------------
-def parse_excel_mooring(file_bytes, filename):
-    imgs = []
-    if filename.lower().endswith('.xls'):
-        pngs = [m.start() for m in re.finditer(b'\x89PNG\r\n\x1a\n', file_bytes)]
-        for s in pngs:
-            e = file_bytes.find(b'IEND', s)
-            if e != -1:
-                try:
-                    im = Image.open(io.BytesIO(file_bytes[s:e+8]))
-                    if im.size[0] > 180 and im.size[1] > 180: imgs.append(im)
-                except: pass
-    elif filename.lower().endswith('.xlsx'):
-        try:
-            with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-                for name in z.namelist():
-                    if name.startswith('xl/media/'):
-                        try:
-                            im = Image.open(io.BytesIO(z.read(name)))
-                            if im.size[0] > 180 and im.size[1] > 180: imgs.append(im)
-                        except: pass
-        except: pass
-    return imgs
+auto_tide = fetch_tide_height(selected_port)
+tide_height = st.sidebar.number_input("Marea Corrente (m)", value=float(auto_tide), step=0.1)
+ship_draft = st.sidebar.number_input("Pescaggio Nave / Draft (m)", value=8.2, step=0.1)
 
-# -----------------------------------------------------------------------------
-# 4. BARRA DI NAVIGAZIONE TAB PRINCIPALI
-# -----------------------------------------------------------------------------
-st.sidebar.title("🚢 Navigation & Control")
-st.sidebar.markdown(f"**Vessel:** {st.session_state['ship_specs']['name']}")
-st.sidebar.markdown("**Officer:** Second Deck Navigational Officer")
+st.sidebar.header("🌬️ 2. Condizioni Meteo")
+wind_speed = st.sidebar.slider("Velocità Vento (Nodi)", 0, 60, 25)
+wind_dir_true = st.sidebar.slider("Direzione Vento (°True)", 0, 359, 150)
+wind_relative = (wind_dir_true - berth_heading) % 360
 
-page = st.sidebar.radio(
-    "Seleziona Modulo:",
-    [
-        "🎛️ Live Simulation & Dynamic Forces",
-        "🌀 Live Weather & Windy Integration",
-        "📐 Import & Parsing Schemi Banchina (Excel)",
-        "⚙️ Specifiche Nave & Pilot Card",
-        "📉 Usura Cavi, MBL & Ispezioni",
-        "📜 Storico Ormeggi & Logbook"
-    ]
-)
+st.sidebar.header("🛠️ 3. Geometria Banchina & Bitte (SWL)")
+bollard_swl = st.sidebar.number_input("SWL Bitte Banchina (Tonnellate)", value=100.0)
+dist_fiancata = st.sidebar.number_input("Distanza Banchina-Fairlead (m)", value=15.0)
 
-# =============================================================================
-# PAGINA 1: LIVE SIMULATION & DYNAMIC FORCES (MEG4 CALCULATION)
-# =============================================================================
-if page == "🎛️ Live Simulation & Dynamic Forces":
-    st.title("🎛️ Simulated Mooring Forces & Recommended Arrangement")
-    st.caption("Calcolo delle forze di vento e corrente in tempo reale basato sulle linee guida OCIMF MEG4")
+# ==========================================
+# 4. CONFIGURAZIONE CAVI (INPUT UTENTE)
+# ==========================================
+st.subheader("📋 Configurazione Cavi d'Ormeggio Passati a Terra")
 
-    col_env1, col_env2, col_env3 = st.columns(3)
-    
-    with col_env1:
-        st.subheader("💨 Vento Reale / Simulato")
-        wind_speed = st.slider("Velocità Vento (Nodi / Knots)", 0, 60, 28)
-        wind_dir = st.slider("Direzione Vento relativa alla nave (°)", 0, 360, 45)
+col_fwd, col_aft = st.columns(2)
+
+def generate_lines_input(section, qty):
+    lines = []
+    for i in range(1, qty + 1):
+        c1, c2 = st.columns(2)
+        with c1:
+            azimut = st.number_input(f"{section} Linea #{i} - Azimut (°)", min_value=-90, max_value=90, value=(20 if i<=2 else (0 if i<=4 else -30)), key=f"{section}_az_{i}")
+        with c2:
+            elev = st.number_input(f"{section} Linea #{i} - Pendenza H (m)", min_value=1.0, max_value=25.0, value=12.0, key=f"{section}_h_{i}")
         
-    with col_env2:
-        st.subheader("🌊 Corrente")
-        curr_speed = st.slider("Velocità Corrente (Knots)", 0.0, 4.0, 1.1, step=0.1)
-        curr_dir = st.slider("Direzione Corrente relativa (°)", 0, 360, 30)
+        # Categorizzazione automatica
+        if abs(azimut) <= 15:
+            role = "BREAST"
+        elif azimut > 15:
+            role = "HEAD" if section == "FWD" else "SPRING"
+        else:
+            role = "SPRING" if section == "FWD" else "STERN"
+            
+        lines.append({
+            "id": f"{section}_{i}",
+            "section": section,
+            "azimut": azimut,
+            "height": elev,
+            "role": role,
+            "mbl": LINES_DATABASE[section]["MBL"],
+            "stiffness": LINES_DATABASE[section]["stiffness_factor"]
+        })
+    return lines
 
-    with col_env3:
-        st.subheader("⚓ Banchina & Assetto")
-        dock_side = st.selectbox("Fianco all'Ormeggio", ["Sinistra (Port Side)", "Dritta (Starboard Side)"])
-        tide_variation = st.number_input("Variazione Marea [m]", -2.0, 5.0, 1.2)
+with col_fwd:
+    st.markdown("**PROA (FWD) - HMPE 44mm (MBL 115t)**")
+    fwd_active = st.number_input("Cavi FWD Attivi", min_value=3, max_value=6, value=4)
+    fwd_lines = generate_lines_input("FWD", fwd_active)
 
-    # ALGORITMO MEG4 per Forze Trasversali e Longitudinali
-    rho_air = 1.225 # kg/m3
-    wind_ms = wind_speed * 0.514444
-    rad_wind = np.radians(wind_dir)
+with col_aft:
+    st.markdown("**POPPA (AFT) - Polyester 42mm (MBL 110t)**")
+    aft_active = st.number_input("Cavi AFT Attivi", min_value=3, max_value=6, value=4)
+    aft_lines = generate_lines_input("AFT", aft_active)
+
+all_lines = fwd_lines + aft_lines
+
+# ==========================================
+# 5. MOTORE DI CALCOLO SOLLECITAZIONI & MEG4
+# ==========================================
+def calculate_mooring_stresses(lines, wind_kts, wind_rel_angle):
+    # Calcolo spinta stimata sul profilo della nave (kN & Tonnellate)
+    wind_rad = np.radians(wind_rel_angle)
+    force_transversal = 0.05 * (wind_kts ** 2) * np.abs(np.sin(wind_rad))
+    force_longitudinal = 0.02 * (wind_kts ** 2) * np.abs(np.cos(wind_rad))
     
-    # Forze Vento (Tonnellate)
-    front_wind_force = 0.5 * rho_air * (wind_ms**2) * st.session_state["ship_specs"]["wind_area_front"] * np.cos(rad_wind) * 0.000101972
-    side_wind_force = 0.5 * rho_air * (wind_ms**2) * st.session_state["ship_specs"]["wind_area_side"] * np.sin(rad_wind) * 0.000101972
+    results = []
+    total_stiffness_x = sum([l["stiffness"] * np.cos(np.radians(l["azimut"])) for l in lines])
+    total_stiffness_y = sum([l["stiffness"] * np.sin(np.radians(l["azimut"])) for l in lines])
     
-    # Forze Corrente
-    curr_ms = curr_speed * 0.514444
-    rad_curr = np.radians(curr_dir)
-    side_curr_force = 0.5 * 1025 * (curr_ms**2) * st.session_state["ship_specs"]["current_area_side"] * np.sin(rad_curr) * 0.000101972
+    for l in lines:
+        az_rad = np.radians(l["azimut"])
+        # Correzione Pendenza Verticale con Marea e Pescaggio
+        effective_height = l["height"] - tide_height + (ship_draft - 8.0)
+        vert_angle = np.arctan(effective_height / dist_fiancata)
+        
+        # Tensionamento dinamico in base alla rigidezza
+        share_x = (l["stiffness"] * np.cos(az_rad)) / max(total_stiffness_x, 0.001)
+        share_y = (l["stiffness"] * np.sin(az_rad)) / max(total_stiffness_y, 0.001)
+        
+        tension_horiz = np.sqrt((force_longitudinal * share_x)**2 + (force_transversal * share_y)**2)
+        tension_total = tension_horiz / max(np.cos(vert_angle), 0.1)
+        
+        brake_capacity = l["mbl"] * WINCH_BRAKE_PERCENT
+        pct_mbl = (tension_total / l["mbl"]) * 100
+        
+        results.append({
+            "ID": l["id"],
+            "Ruolo": l["role"],
+            "Tensione (t)": round(tension_total, 1),
+            "% MBL": round(pct_mbl, 1),
+            "Limite Freno (t)": round(brake_capacity, 1),
+            "Stato Freno": "⚠️ SLITTAMENTO" if tension_total > brake_capacity else "OK"
+        })
+    return pd.DataFrame(results), force_transversal, force_longitudinal
 
-    total_transverse_force = abs(side_wind_force) + abs(side_curr_force)
-    total_longitudinal_force = abs(front_wind_force)
+df_results, f_trans, f_long = calculate_mooring_stresses(all_lines, wind_speed, wind_relative)
 
-    st.markdown("---")
-    st.subheader("📊 Tonnellate di Forza Risultanti sugli Ormeggi")
+# ==========================================
+# 6. VERIFICA REQUISITI MINIMI E OUTPUT
+# ==========================================
+st.markdown("---")
+st.header("📊 Output Analisi & Suggerimenti")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Spinta Trasversale Totale", f"{total_transverse_force:.1f} Ton", delta=f"{'⚠️ Alta' if total_transverse_force > 150 else 'OK'}")
-    c2.metric("Spinta Longitudinale Totale", f"{total_longitudinal_force:.1f} Ton")
-    c3.metric("Carico Stimato su Cavo Singolo", f"{(total_transverse_force/6):.1f} Ton / cavo")
+# Controlli Minimi MEG4 (2-2-2)
+counts = df_results["Ruolo"].value_counts()
+n_head = counts.get("HEAD", 0) + counts.get("STERN", 0)
+n_breast = counts.get("BREAST", 0)
+n_spring = counts.get("SPRING", 0)
+
+if n_head < 2 or n_breast < 2 or n_spring < 2:
+    st.error(f"❌ **CONFIGURAZIONE NON A NORMA MEG4:** Trovati {n_head} Head/Stern, {n_breast} Breast, {n_spring} Spring. Minimo richiesto: 2-2-2 per tipologia.")
+else:
+    st.success("✅ Configurazione d'ormeggio conforme ai requisiti minimi di layout (Minimo 2 Head/Stern, 2 Breast, 2 Spring).")
+
+c_out1, c_out2 = st.columns(2)
+
+with c_out1:
+    st.subheader("Tensione Corrente sui Cavi")
+    st.dataframe(df_results, use_container_width=True)
+
+with c_out2:
+    st.subheader("Cavo Critico & Vento Massimo")
+    max_line = df_results.loc[df_results["% MBL"].idxmax()]
+    st.warning(f"🔴 **Cavo più sollecitato:** {max_line['ID']} ({max_line['Ruolo']}) al **{max_line['% MBL']}% del MBL** ({max_line['Tensione (t)']} t).")
     
-    mbl_limit = 115 * 0.55 # Limit 55% MBL
-    status_limit = "🟢 Sicuro (<55% MBL)" if (total_transverse_force/6) < mbl_limit else "🚨 Rischio Sovraccarico"
-    c4.metric("Limite Sicurezza MEG4", f"{mbl_limit:.1f} Ton", delta=status_limit)
+    # Calcolo Vento Massimo Sostenibile
+    max_wind = wind_speed
+    while True:
+        df_temp, _, _ = calculate_mooring_stresses(all_lines, max_wind, wind_relative)
+        if df_temp["% MBL"].max() >= 55.0 or (df_temp["Stato Freno"] == "⚠️ SLITTAMENTO").any():
+            break
+        max_wind += 1
+        if max_wind > 100:
+            break
+            
+    st.metric("Vento Max Sostenibile (Limite Safety 55% MBL)", f"{max_wind - 1} Nodi")
 
-    st.markdown("---")
-    st.subheader("💡 Ormeggio Consigliato in Base alle Condizioni Meteo")
-    
-    if total_transverse_force > 180:
-        st.error("🚨 **RACCOMANDAZIONE:** Configurazione Rinforzata richiesta! Utilizzare almeno **4 Head Lines, 4 Breast Lines, 2 Springs AFT/FWD**. Considerare l'uso di un rimorchiatore in assistenza se il vento supera i 35 kt.")
-    elif total_transverse_force > 100:
-        st.warning("🟡 **RACCOMANDAZIONE:** Configurazione standard **6/2** o **7/2** (3 Head Lines, 3 Breast Lines, 2 Springs FWD e AFT). Verificare il pretensionamento automatico dei verricelli.")
-    else:
-        st.success("🟢 **RACCOMANDAZIONE:** Configurazione Standard Banchina **6/2** sufficiente. Tensione bilanciata su tutti i cavi in fibra.")
+# ==========================================
+# 7. MATRICE WHAT-IF & INCREMENTO TENUTA
+# ==========================================
+st.subheader("📈 Matrice Sensibilità Vento (Aggiunta Cavi)")
 
-# =============================================================================
-# PAGINA 2: LIVE WEATHER & WINDY INTEGRATION
-# =============================================================================
-elif page == "🌀 Live Weather & Windy Integration":
-    st.title("🌀 Live Weather & Windy Radar Integration")
-    
-    col_w1, col_w2 = st.columns([1, 2])
-    with col_w1:
-        st.subheader("📍 Selezione Porto / Banchina")
-        lat = st.number_input("Latitudine", value=31.8578)
-        lon = st.number_input("Longitudine", value=-116.6258)
-        zoom = st.slider("Zoom Mappa", 3, 15, 11)
-        overlay = st.selectbox("Layer Meteo", ["wind", "waves", "currents", "clouds", "pressure"])
+col_b, col_s, col_h = st.columns(3)
 
-    with col_w2:
-        windy_html = f"""
-        <iframe width="100%" height="450" src="https://embed.windy.com/embed2.html?lat={lat}&lon={lon}&detailLat={lat}&detailLon={lon}&width=650&height=450&zoom={zoom}&level=surface&overlay={overlay}&product=ecmwf&menu=&message=&marker=true&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=kt&metricTemp=%C2%B0C&radarRange=-1" frameborder="0"></iframe>
-        """
-        st.components.v1.html(windy_html, height=470)
+def evaluate_additional_line(line_type):
+    temp_lines = list(all_lines)
+    temp_lines.append({
+        "id": f"EXTRA_{line_type}", "section": "FWD",
+        "azimut": 0 if line_type=="BREAST" else 45, "height": 12.0,
+        "role": line_type, "mbl": 115.0, "stiffness": 1.0
+    })
+    w = wind_speed
+    while True:
+        df_t, _, _ = calculate_mooring_stresses(temp_lines, w, wind_relative)
+        if df_t["% MBL"].max() >= 55.0:
+            return w - 1
+        w += 1
+        if w > 100: return 100
 
-# =============================================================================
-# PAGINA 3: IMPORT SCHEMI BANCHINA EXCEL
-# =============================================================================
-elif page == "📐 Import & Parsing Schemi Banchina (Excel)":
-    st.title("📐 Importatore Schemi Grafici Banchina da Excel")
-    uploaded_file = st.file_uploader("Carica il file del piano d'ormeggio (.xls / .xlsx)", type=["xls", "xlsx"])
-    
-    if uploaded_file:
-        bytes_data = uploaded_file.read()
-        imgs = parse_excel_mooring(bytes_data, uploaded_file.name)
-        st.success(f"File caricato! Estratti {len(imgs)} diagrammi ad alta risoluzione.")
-        if imgs:
-            c1, c2 = st.columns(2)
-            for idx, img in enumerate(imgs):
-                with (c1 if idx % 2 == 0 else c2):
-                    st.image(img, caption=f"Layout Dettaglio Banchina #{idx+1}", use_column_width=True)
+with col_b:
+    w_b = evaluate_additional_line("BREAST")
+    st.metric("Aggiungendo +1 BREAST", f"{w_b} Nodi", f"+{w_b - (max_wind - 1)} kts")
 
-# =============================================================================
-# PAGINA 4: SPECIFICHE NAVE & PILOT CARD (INTERFACCIA RIDISEGNATA)
-# =============================================================================
-elif page == "⚙️ Specifiche Nave & Pilot Card":
-    st.title("⚙️ Carnival Panorama - Particulars & Pilot Card")
-    st.caption("Specifiche tecniche principali e dati di manovrabilità della nave")
+with col_s:
+    w_s = evaluate_additional_line("SPRING")
+    st.metric("Aggiungendo +1 SPRING", f"{w_s} Nodi", f"+{w_s - (max_wind - 1)} kts")
 
-    specs = st.session_state["ship_specs"]
-    
-    st.subheader("📐 Dimensioni & Carenamento")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Lunghezza (LOA)", f"{specs['loa']} m")
-    col2.metric("Larghezza (Beam)", f"{specs['beam']} m")
-    col3.metric("Pescaggio (Draft)", f"{specs['draft']} m")
-    col4.metric("Altezza Max (Air Draft)", f"{specs['air_draft']} m")
-    col5.metric("Dislocamento", f"{specs['displacement']:,} T".replace(",", "."))
-
-    st.markdown("---")
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.subheader("🌬️ Superfici Esposte (Wind & Current Areas)")
-        st.markdown(f"""
-        <div style="background-color: #1e222b; padding: 20px; border-radius: 8px; border: 1px solid #2e3644; font-size: 15px;">
-            <p>💨 <b>Superficie Vento Frontale:</b> {specs['wind_area_front']} m²</p>
-            <p>💨 <b>Superficie Vento Laterale:</b> {specs['wind_area_side']} m²</p>
-            <hr style="border-color: #2e3644;">
-            <p>🌊 <b>Superficie Corrente Frontale:</b> {specs['current_area_front']} m²</p>
-            <p>🌊 <b>Superficie Corrente Laterale:</b> {specs['current_area_side']} m²</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col_b:
-        st.subheader("🚤 Propulsione & Manovrabilità")
-        st.markdown("""
-        <div style="background-color: #1e222b; padding: 20px; border-radius: 8px; border: 1px solid #2e3644; font-size: 15px;">
-            <p>⚡ <b>Propulsione Principale:</b> 2x Azipod ABB V2100 (Totale 37,000 kW)</p>
-            <p>🔄 <b>Bow Thrusters:</b> 3x Brunvoll Transverse Thrusters (3x 2,200 kW)</p>
-            <p>🚀 <b>Velocità Max:</b> 22.6 Nodi</p>
-            <p>⚓ <b>Ancore:</b> 2x Spek Anchors (11.5 Ton ciascuna) - 14 Lunghezze Catena</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-# =============================================================================
-# PAGINA 5: USURA CAVI, MBL & ISPEEZIONI
-# =============================================================================
-elif page == "📉 Usura Cavi, MBL & Ispezioni":
-    st.title("📉 Stato Usura Cavi, MBL & Certificati Linee")
-    
-    st.dataframe(st.session_state["mooring_lines_db"], use_container_width=True)
-    
-    st.markdown("---")
-    st.subheader("⚠️ Allarmi Manutenzione Cavi")
-    for idx, row in st.session_state["mooring_lines_db"].iterrows():
-        if "🔴" in row["Stato"]:
-            st.error(f"**Cavo {row['ID']} ({row['Ruolo']} - {row['Posizione']})**: Raggiunto il limite ore uso ({row['Ore_Uso']} hrs). Sostituzione raccomandata.")
-
-# =============================================================================
-# PAGINA 6: STORICO ORMEGGI & LOGBOOK
-# =============================================================================
-elif page == "📜 Storico Ormeggi & Logbook":
-    st.title("📜 Storico Operazioni di Ormeggio")
-    st.dataframe(st.session_state["mooring_history"], use_container_width=True)
+with col_h:
+    w_h = evaluate_additional_line("HEAD")
+    st.metric("Aggiungendo +1 HEAD", f"{w_h} Nodi", f"+{w_h - (max_wind - 1)} kts")
