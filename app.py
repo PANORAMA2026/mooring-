@@ -17,80 +17,88 @@ LINES_DATABASE = {
     "AFT": {"material": "Polyester 42mm", "MBL": 110.0, "stiffness_factor": 0.8}
 }
 WINCH_BRAKE_PERCENT = 0.60  # Freno tarato al 60% MBL
+SAFE_WORKING_LOAD_PERCENT = 0.55  # OCIMF MEG4 Max Working Load (55% MBL)
 
 # ==========================================
-# 2. MEMORIA PERSISTENTE BANCHINE (SEPARATA FWD / AFT)
+# 2. MEMORIA PERSISTENTE BANCHINE (SWL SINGOLA BITTA)
 # ==========================================
 if "berths_db" not in st.session_state:
     st.session_state.berths_db = {
         "Long Beach (US)": {
-            "lat": 33.7541, "lon": -118.2165, "heading": 120, "swl_bollard": 100.0,
+            "lat": 33.7541, "lon": -118.2165, "heading": 120,
             "fwd_bollards": [
-                {"id": 1, "dist_fairlead": 45.0, "dist_fiancata": 15.0, "max_lines": 2, "azimut": 40, "slope": 12}, # Prua estrema
-                {"id": 2, "dist_fairlead": 35.0, "dist_fiancata": 15.0, "max_lines": 2, "azimut": 25, "slope": 11},
-                {"id": 3, "dist_fairlead": 20.0, "dist_fiancata": 12.0, "max_lines": 2, "azimut": 5,  "slope": 9},
-                {"id": 4, "dist_fairlead": 30.0, "dist_fiancata": 10.0, "max_lines": 2, "azimut": -30, "slope": 10} # Spring FWD
+                {"id": 1, "dist_fairlead": 45.0, "dist_fiancata": 15.0, "swl": 100.0, "azimut": 40, "slope": 12},
+                {"id": 2, "dist_fairlead": 35.0, "dist_fiancata": 15.0, "swl": 100.0, "azimut": 25, "slope": 11},
+                {"id": 3, "dist_fairlead": 20.0, "dist_fiancata": 12.0, "swl": 80.0,  "azimut": 5,  "slope": 9},
+                {"id": 4, "dist_fairlead": 30.0, "dist_fiancata": 10.0, "swl": 80.0,  "azimut": -30, "slope": 10}
             ],
             "aft_bollards": [
-                {"id": 1, "dist_fairlead": 30.0, "dist_fiancata": 10.0, "max_lines": 2, "azimut": 30, "slope": 10}, # Spring AFT
-                {"id": 2, "dist_fairlead": 20.0, "dist_fiancata": 12.0, "max_lines": 2, "azimut": -5, "slope": 9},
-                {"id": 3, "dist_fairlead": 35.0, "dist_fiancata": 15.0, "max_lines": 2, "azimut": -25, "slope": 11},
-                {"id": 4, "dist_fairlead": 45.0, "dist_fiancata": 15.0, "max_lines": 2, "azimut": -40, "slope": 12} # Poppa estrema
+                {"id": 1, "dist_fairlead": 30.0, "dist_fiancata": 10.0, "swl": 80.0,  "azimut": 30, "slope": 10},
+                {"id": 2, "dist_fairlead": 20.0, "dist_fiancata": 12.0, "swl": 80.0,  "azimut": -5, "slope": 9},
+                {"id": 3, "dist_fairlead": 35.0, "dist_fiancata": 15.0, "swl": 100.0, "azimut": -25, "slope": 11},
+                {"id": 4, "dist_fairlead": 45.0, "dist_fiancata": 15.0, "swl": 100.0, "azimut": -40, "slope": 12}
             ]
         },
         "Ensenada (MX)": {
-            "lat": 31.8578, "lon": -116.6058, "heading": 45, "swl_bollard": 80.0,
+            "lat": 31.8578, "lon": -116.6058, "heading": 45,
             "fwd_bollards": [
-                {"id": 1, "dist_fairlead": 40.0, "dist_fiancata": 12.0, "max_lines": 2, "azimut": 35, "slope": 10},
-                {"id": 2, "dist_fairlead": 30.0, "dist_fiancata": 12.0, "max_lines": 2, "azimut": 20, "slope": 9},
-                {"id": 3, "dist_fairlead": 18.0, "dist_fiancata": 10.0, "max_lines": 2, "azimut": 0,  "slope": 8},
-                {"id": 4, "dist_fairlead": 25.0, "dist_fiancata": 8.0,  "max_lines": 2, "azimut": -25, "slope": 8}
+                {"id": 1, "dist_fairlead": 40.0, "dist_fiancata": 12.0, "swl": 80.0, "azimut": 35, "slope": 10},
+                {"id": 2, "dist_fairlead": 30.0, "dist_fiancata": 12.0, "swl": 80.0, "azimut": 20, "slope": 9},
+                {"id": 3, "dist_fairlead": 18.0, "dist_fiancata": 10.0, "swl": 60.0, "azimut": 0,  "slope": 8},
+                {"id": 4, "dist_fairlead": 25.0, "dist_fiancata": 8.0,  "swl": 60.0, "azimut": -25, "slope": 8}
             ],
             "aft_bollards": [
-                {"id": 1, "dist_fairlead": 25.0, "dist_fiancata": 8.0,  "max_lines": 2, "azimut": 25, "slope": 8},
-                {"id": 2, "dist_fairlead": 18.0, "dist_fiancata": 10.0, "max_lines": 2, "azimut": 0,  "slope": 8},
-                {"id": 3, "dist_fairlead": 30.0, "dist_fiancata": 12.0, "max_lines": 2, "azimut": -20, "slope": 9},
-                {"id": 4, "dist_fairlead": 40.0, "dist_fiancata": 12.0, "max_lines": 2, "azimut": -35, "slope": 10}
+                {"id": 1, "dist_fairlead": 25.0, "dist_fiancata": 8.0,  "swl": 60.0, "azimut": 25, "slope": 8},
+                {"id": 2, "dist_fairlead": 18.0, "dist_fiancata": 10.0, "swl": 60.0, "azimut": 0,  "slope": 8},
+                {"id": 3, "dist_fairlead": 30.0, "dist_fiancata": 12.0, "swl": 80.0, "azimut": -20, "slope": 9},
+                {"id": 4, "dist_fairlead": 40.0, "dist_fiancata": 12.0, "swl": 80.0, "azimut": -35, "slope": 10}
             ]
         }
     }
 
 # ==========================================
-# 3. CONFIGURAZIONE E EDITOR BANCHINA (FWD & AFT SEPARATI)
+# 3. FUNZIONE CALCOLO AUTOMATICO CAPIENZA BITTA
+# ==========================================
+def calculate_bollard_max_lines(swl_bollard, line_mbl):
+    """
+    Calcola quante cime la bitta può sostenere al massimo in sicurezza.
+    Si considera il carico limite operativo di ciascuna cima (55% MBL MEG4).
+    """
+    max_design_load_per_line = line_mbl * SAFE_WORKING_LOAD_PERCENT
+    max_lines = int(swl_bollard // max_design_load_per_line)
+    return max(1, max_lines)  # Almeno 1 cima ammessa se SWL > 0
+
+# ==========================================
+# 4. CONFIGURAZIONE E EDITOR BANCHINA
 # ==========================================
 st.sidebar.header("📍 Selezione Operativa")
 selected_port = st.sidebar.selectbox("Porto Attivo", list(st.session_state.berths_db.keys()))
 
-with st.expander("🛠️ CONFIGURAZIONE BITTE BANCHINA (FWD / AFT SEPARATI)", expanded=False):
-    st.info(f"Configura le bitte di **{selected_port}**. La numerazione (#1, #2, ...) procede sempre da Prua verso Poppa all'interno di ciascuna sezione.")
+with st.expander("🛠️ CONFIGURAZIONE BITTE BANCHINA (SWL Singolo & Calcolo Capienza)", expanded=False):
+    st.info(f"Configura le bitte di **{selected_port}**. Inserisci l'**SWL** per ciascuna bitta: la capienza massima delle cime verrà calcolata automaticamente dal sistema.")
     
     port_cfg = st.session_state.berths_db[selected_port]
     
-    cp1, cp2 = st.columns(2)
-    with cp1:
-        new_head = st.number_input("Orientamento Banchina (°True)", 0, 359, int(port_cfg["heading"]))
-    with cp2:
-        new_swl = st.number_input("SWL Bitte (Tonnellate)", 10.0, 250.0, float(port_cfg["swl_bollard"]))
-        
+    new_head = st.number_input("Orientamento Banchina (°True)", 0, 359, int(port_cfg["heading"]))
     st.markdown("---")
     
     # --- SEZIONE FWD ---
     st.markdown("### 🚢 1. FWD Mooring Station (Bitte Banchina Prua)")
-    st.caption("Bitte di banchina destinate ai cavi di prua. Bitta FWD #1 è la più a prua.")
-    
     num_fwd_bollards = st.number_input("Numero Bitte Prua (FWD)", min_value=2, max_value=8, value=len(port_cfg["fwd_bollards"]), key=f"n_fwd_{selected_port}")
     
     updated_fwd_bollards = []
     for idx in range(num_fwd_bollards):
         b_id = idx + 1
         default_b = port_cfg["fwd_bollards"][idx] if idx < len(port_cfg["fwd_bollards"]) else {
-            "id": b_id, "dist_fairlead": 30.0, "dist_fiancata": 12.0, "max_lines": 2, "azimut": 20, "slope": 10
+            "id": b_id, "dist_fairlead": 30.0, "dist_fiancata": 12.0, "swl": 80.0, "azimut": 20, "slope": 10
         }
         
-        st.markdown(f"**📍 Bitta FWD #{b_id}** *(Bitta Prua {b_id})*")
+        calculated_cap = calculate_bollard_max_lines(default_b["swl"], LINES_DATABASE["FWD"]["MBL"])
+        
+        st.markdown(f"**📍 Bitta FWD #{b_id}** *(Capienza Calcolata: **{calculated_cap} cime** max)*")
         cb1, cb2, cb3, cb4, cb5 = st.columns(5)
         with cb1:
-            m_lines = st.number_input(f"Capienza Max", 1, 4, int(default_b["max_lines"]), key=f"fwd_bl_max_{selected_port}_{b_id}")
+            swl_val = st.number_input(f"SWL Bitta (t)", 10.0, 300.0, float(default_b["swl"]), key=f"fwd_bl_swl_{selected_port}_{b_id}")
         with cb2:
             d_fl = st.number_input(f"Dist. Fairlead (m)", 1.0, 150.0, float(default_b.get("dist_fairlead", 30.0)), key=f"fwd_bl_dfl_{selected_port}_{b_id}")
         with cb3:
@@ -101,28 +109,28 @@ with st.expander("🛠️ CONFIGURAZIONE BITTE BANCHINA (FWD / AFT SEPARATI)", e
             d_fn = st.number_input(f"Dist. Fiancata (m)", 1.0, 50.0, float(default_b.get("dist_fiancata", 12.0)), key=f"fwd_bl_dfn_{selected_port}_{b_id}")
             
         updated_fwd_bollards.append({
-            "id": b_id, "max_lines": m_lines, "dist_fairlead": d_fl, "dist_fiancata": d_fn, "azimut": az, "slope": sl
+            "id": b_id, "swl": swl_val, "dist_fairlead": d_fl, "dist_fiancata": d_fn, "azimut": az, "slope": sl
         })
 
     st.markdown("---")
     
     # --- SEZIONE AFT ---
     st.markdown("### ⚓ 2. AFT Mooring Station (Bitte Banchina Poppa)")
-    st.caption("Bitte di banchina destinate ai cavi di poppa. Bitta AFT #1 è quella più verso prua dell'area di poppa.")
-    
     num_aft_bollards = st.number_input("Numero Bitte Poppa (AFT)", min_value=2, max_value=8, value=len(port_cfg["aft_bollards"]), key=f"n_aft_{selected_port}")
     
     updated_aft_bollards = []
     for idx in range(num_aft_bollards):
         b_id = idx + 1
         default_b = port_cfg["aft_bollards"][idx] if idx < len(port_cfg["aft_bollards"]) else {
-            "id": b_id, "dist_fairlead": 30.0, "dist_fiancata": 12.0, "max_lines": 2, "azimut": -20, "slope": 10
+            "id": b_id, "dist_fairlead": 30.0, "dist_fiancata": 12.0, "swl": 80.0, "azimut": -20, "slope": 10
         }
         
-        st.markdown(f"**📍 Bitta AFT #{b_id}** *(Bitta Poppa {b_id})*")
+        calculated_cap = calculate_bollard_max_lines(default_b["swl"], LINES_DATABASE["AFT"]["MBL"])
+        
+        st.markdown(f"**📍 Bitta AFT #{b_id}** *(Capienza Calcolata: **{calculated_cap} cime** max)*")
         cb1, cb2, cb3, cb4, cb5 = st.columns(5)
         with cb1:
-            m_lines = st.number_input(f"Capienza Max", 1, 4, int(default_b["max_lines"]), key=f"aft_bl_max_{selected_port}_{b_id}")
+            swl_val = st.number_input(f"SWL Bitta (t)", 10.0, 300.0, float(default_b["swl"]), key=f"aft_bl_swl_{selected_port}_{b_id}")
         with cb2:
             d_fl = st.number_input(f"Dist. Fairlead (m)", 1.0, 150.0, float(default_b.get("dist_fairlead", 30.0)), key=f"aft_bl_dfl_{selected_port}_{b_id}")
         with cb3:
@@ -133,18 +141,17 @@ with st.expander("🛠️ CONFIGURAZIONE BITTE BANCHINA (FWD / AFT SEPARATI)", e
             d_fn = st.number_input(f"Dist. Fiancata (m)", 1.0, 50.0, float(default_b.get("dist_fiancata", 12.0)), key=f"aft_bl_dfn_{selected_port}_{b_id}")
             
         updated_aft_bollards.append({
-            "id": b_id, "max_lines": m_lines, "dist_fairlead": d_fl, "dist_fiancata": d_fn, "azimut": az, "slope": sl
+            "id": b_id, "swl": swl_val, "dist_fairlead": d_fl, "dist_fiancata": d_fn, "azimut": az, "slope": sl
         })
 
-    if st.button("💾 Salva Banchina (FWD e AFT) in Memoria"):
+    if st.button("💾 Salva Banchina e SWL Bitte in Memoria"):
         st.session_state.berths_db[selected_port]["heading"] = new_head
-        st.session_state.berths_db[selected_port]["swl_bollard"] = new_swl
         st.session_state.berths_db[selected_port]["fwd_bollards"] = updated_fwd_bollards
         st.session_state.berths_db[selected_port]["aft_bollards"] = updated_aft_bollards
-        st.success(f"Configurazione FWD e AFT per {selected_port} salvata con successo!")
+        st.success(f"Configurazione SWL per {selected_port} salvata con successo!")
 
 # ==========================================
-# 4. CONDIMETEO REAL-TIME
+# 5. CONDIMETEO REAL-TIME
 # ==========================================
 st.sidebar.header("🌤️ 2. Condimeteo Live / Previsioni")
 
@@ -176,7 +183,7 @@ else:
 wind_relative = (wind_dir_true - active_banchina["heading"]) % 360
 
 # ==========================================
-# 5. ALGORITMO SELEZIONE OTTIMALE BITTE
+# 6. ALGORITMO SELEZIONE OTTIMALE BITTE
 # ==========================================
 st.sidebar.header("⚙️ 3. Numero Cavi Target")
 target_fwd_lines = st.sidebar.number_input("Totale Cavi da Passare a Prua (FWD)", 2, 8, 4)
@@ -186,16 +193,21 @@ def optimize_mooring_setup(fwd_bollards, aft_bollards, target_fwd, target_aft):
     def assign_station_lines(bollards_list, target_count, station_name):
         assigned_plan = []
         remaining = target_count
+        line_mbl = LINES_DATABASE[station_name]["MBL"]
         
-        # Ordina per azimut privilegiando tiro migliore
-        sorted_b = sorted(bollards_list, key=lambda x: abs(x["azimut"]), reverse=True)
+        # Calcolo capienza massima di ciascuna bitta in base al suo SWL
+        bollard_caps = {b["id"]: calculate_bollard_max_lines(b["swl"], line_mbl) for b in bollards_list}
         bollard_usage = {b["id"]: 0 for b in bollards_list}
+        
+        # Ordina per azimut privilegiando il miglior tiro
+        sorted_b = sorted(bollards_list, key=lambda x: abs(x["azimut"]), reverse=True)
         
         while remaining > 0:
             added = False
             for b in sorted_b:
-                if bollard_usage[b["id"]] < b["max_lines"] and remaining > 0:
-                    bollard_usage[b["id"]] += 1
+                b_id = b["id"]
+                if bollard_usage[b_id] < bollard_caps[b_id] and remaining > 0:
+                    bollard_usage[b_id] += 1
                     remaining -= 1
                     added = True
             if not added:
@@ -218,9 +230,10 @@ def optimize_mooring_setup(fwd_bollards, aft_bollards, target_fwd, target_aft):
                 "role": role,
                 "azimut": az,
                 "slope": b["slope"],
+                "swl": b["swl"],
+                "max_calc_lines": bollard_caps[b["id"]],
                 "dist_fairlead": b.get("dist_fairlead", 30.0),
                 "dist_fiancata": b.get("dist_fiancata", 12.0),
-                "max_lines": b["max_lines"],
                 "station": station_name
             })
         return assigned_plan
@@ -233,7 +246,7 @@ def optimize_mooring_setup(fwd_bollards, aft_bollards, target_fwd, target_aft):
 full_plan = optimize_mooring_setup(active_banchina["fwd_bollards"], active_banchina["aft_bollards"], target_fwd_lines, target_aft_lines)
 
 # ==========================================
-# 6. CALCOLO STRESS ED EFFICIENZA GEOMETRICA
+# 7. CALCOLO STRESS ED EFFICIENZA GEOMETRICA
 # ==========================================
 def run_mooring_stress_analysis(plan, w_speed, w_rel):
     wind_rad = np.radians(w_rel)
@@ -254,6 +267,7 @@ def run_mooring_stress_analysis(plan, w_speed, w_rel):
                 "slope": item["slope"],
                 "dist_fairlead": item["dist_fairlead"],
                 "dist_fiancata": item["dist_fiancata"],
+                "swl_bollard": item["swl"],
                 "mbl": mat_info["MBL"],
                 "stiffness": mat_info["stiffness_factor"]
             })
@@ -280,6 +294,7 @@ def run_mooring_stress_analysis(plan, w_speed, w_rel):
             "Cavo": l["line_id"],
             "Stazione": l["station"],
             "Bitta Banchina": f"{l['station']} #{l['bollard_id']}",
+            "SWL Bitta (t)": l["swl_bollard"],
             "Tipologia Cavo": l["role"],
             "Dist. Fairlead (m)": l["dist_fairlead"],
             "Pendenza (°)": l["slope"],
@@ -293,7 +308,7 @@ def run_mooring_stress_analysis(plan, w_speed, w_rel):
 df_analysis = run_mooring_stress_analysis(full_plan, wind_speed, wind_relative)
 
 # ==========================================
-# 7. OUTPUT ISTRUZIONI DI COPERTA
+# 8. OUTPUT ISTRUZIONI DI COPERTA
 # ==========================================
 st.markdown("---")
 st.header(f"📋 Piano d'Ormeggio e Distribuzione Cavi - {selected_port}")
@@ -325,7 +340,7 @@ with col_a_sum:
     """)
 
 st.markdown("---")
-st.subheader("📍 Disposizione Tattica Cavi sulle Bitte di Banchina (Divisa FWD / AFT)")
+st.subheader("📍 Disposizione Tattica Cavi e Limiti SWL Bitte")
 
 plan_summary = []
 for p in full_plan:
@@ -333,13 +348,14 @@ for p in full_plan:
     plan_summary.append({
         "Stazione": p["station"],
         "Bitta Banchina": f"Bitta {p['station']} #{p['bollard_id']}",
+        "SWL Bitta (t)": p["swl"],
+        "Capienza Max Calcolata": f"{p['max_calc_lines']} Cavi",
         "Stato Bitta": status_str,
-        "Numero Cavi": p["qty"],
+        "Numero Cavi Passati": p["qty"],
         "Tipologia Cavo": p["role"] if p["qty"] > 0 else "N/A",
         "Dist. Fairlead (m)": p["dist_fairlead"],
         "Pendenza Cavo (°)": p["slope"],
-        "Azimut Bitta (°)": p["azimut"],
-        "Capienza Max": f"{p['max_lines']} Cavi"
+        "Azimut Bitta (°)": p["azimut"]
     })
 
 df_plan_view = pd.DataFrame(plan_summary)
@@ -353,7 +369,7 @@ with tab_aft:
     st.dataframe(df_plan_view[df_plan_view["Stazione"] == "AFT"], use_container_width=True)
 
 # ==========================================
-# 8. VERIFICA SICUREZZA
+# 9. VERIFICA SICUREZZA
 # ==========================================
 st.markdown("---")
 st.subheader("⚡ Verifiche di Sicurezza e Limiti di Carico")
@@ -362,7 +378,7 @@ c_sec1, c_sec2 = st.columns(2)
 
 with c_sec1:
     st.markdown("**Analisi Carico sui Singoli Cavi**")
-    st.dataframe(df_analysis[["Cavo", "Stazione", "Bitta Banchina", "Tipologia Cavo", "Dist. Fairlead (m)", "Pendenza (°)", "Tensione (t)", "% MBL", "Stato Freno"]], use_container_width=True)
+    st.dataframe(df_analysis[["Cavo", "Stazione", "Bitta Banchina", "SWL Bitta (t)", "Tipologia Cavo", "Dist. Fairlead (m)", "Pendenza (°)", "Tensione (t)", "% MBL", "Stato Freno"]], use_container_width=True)
 
 with c_sec2:
     st.markdown("**Limiti di Sicurezza Vento**")
