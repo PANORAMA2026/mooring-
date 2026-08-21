@@ -60,13 +60,9 @@ if "berths_db" not in st.session_state:
 # 3. FUNZIONE CALCOLO AUTOMATICO CAPIENZA BITTA
 # ==========================================
 def calculate_bollard_max_lines(swl_bollard, line_mbl):
-    """
-    Calcola quante cime la bitta può sostenere al massimo in sicurezza.
-    Si considera il carico limite operativo di ciascuna cima (55% MBL MEG4).
-    """
     max_design_load_per_line = line_mbl * SAFE_WORKING_LOAD_PERCENT
     max_lines = int(swl_bollard // max_design_load_per_line)
-    return max(1, max_lines)  # Almeno 1 cima ammessa se SWL > 0
+    return max(1, max_lines)
 
 # ==========================================
 # 4. CONFIGURAZIONE E EDITOR BANCHINA
@@ -78,7 +74,6 @@ with st.expander("🛠️ CONFIGURAZIONE BITTE BANCHINA (SWL Singolo & Calcolo C
     st.info(f"Configura le bitte di **{selected_port}**. Inserisci l'**SWL** per ciascuna bitta: la capienza massima delle cime verrà calcolata automaticamente dal sistema.")
     
     port_cfg = st.session_state.berths_db[selected_port]
-    
     new_head = st.number_input("Orientamento Banchina (°True)", 0, 359, int(port_cfg["heading"]))
     st.markdown("---")
     
@@ -183,59 +178,60 @@ else:
 wind_relative = (wind_dir_true - active_banchina["heading"]) % 360
 
 # ==========================================
-# 6. ALGORITMO SELEZIONE OTTIMALE BITTE
+# 6. ALGORITMO SELEZIONE OTTIMALE (MINIMO 2-2-2)
 # ==========================================
 st.sidebar.header("⚙️ 3. Numero Cavi Target")
-target_fwd_lines = st.sidebar.number_input("Totale Cavi da Passare a Prua (FWD)", 2, 8, 4)
-target_aft_lines = st.sidebar.number_input("Totale Cavi da Passare a Poppa (AFT)", 2, 8, 4)
+st.sidebar.caption("🔒 *Minimo di Sicurezza Rispettato:* 6 cavi (2 Head/Stern + 2 Breast + 2 Spring)")
+
+target_fwd_lines = st.sidebar.number_input("Totale Cavi da Passare a Prua (FWD)", 6, 12, 6)
+target_aft_lines = st.sidebar.number_input("Totale Cavi da Passare a Poppa (AFT)", 6, 12, 6)
 
 def optimize_mooring_setup(fwd_bollards, aft_bollards, target_fwd, target_aft):
     def assign_station_lines(bollards_list, target_count, station_name):
-        assigned_plan = []
-        remaining = target_count
         line_mbl = LINES_DATABASE[station_name]["MBL"]
-        
-        # Calcolo capienza massima di ciascuna bitta in base al suo SWL
         bollard_caps = {b["id"]: calculate_bollard_max_lines(b["swl"], line_mbl) for b in bollards_list}
         bollard_usage = {b["id"]: 0 for b in bollards_list}
         
-        # Ordina per azimut privilegiando il miglior tiro
-        sorted_b = sorted(bollards_list, key=lambda x: abs(x["azimut"]), reverse=True)
+        main_role = "HEAD" if station_name == "FWD" else "STERN"
+        lines_needed = {main_role: 2, "BREAST": 2, "SPRING": 2}
         
-        while remaining > 0:
-            added = False
-            for b in sorted_b:
-                b_id = b["id"]
-                if bollard_usage[b_id] < bollard_caps[b_id] and remaining > 0:
-                    bollard_usage[b_id] += 1
-                    remaining -= 1
-                    added = True
-            if not added:
-                break
-                
-        for b in bollards_list:
-            qty = bollard_usage[b["id"]]
-            az = b["azimut"]
-            
-            if abs(az) <= 15:
-                role = "BREAST"
-            elif az > 15:
-                role = "HEAD" if station_name == "FWD" else "SPRING"
+        extra_lines = target_count - 6
+        if extra_lines > 0:
+            lines_needed["BREAST"] += extra_lines // 2
+            lines_needed[main_role] += extra_lines - (extra_lines // 2)
+
+        assigned_plan = []
+        
+        for role, qty in lines_needed.items():
+            if role == main_role:
+                best_b = sorted(bollards_list, key=lambda x: x["azimut"], reverse=True)
+            elif role == "SPRING":
+                best_b = sorted(bollards_list, key=lambda x: x["azimut"])
             else:
-                role = "SPRING" if station_name == "FWD" else "STERN"
+                best_b = sorted(bollards_list, key=lambda x: abs(x["azimut"]))
                 
-            assigned_plan.append({
-                "bollard_id": b["id"],
-                "qty": qty,
-                "role": role,
-                "azimut": az,
-                "slope": b["slope"],
-                "swl": b["swl"],
-                "max_calc_lines": bollard_caps[b["id"]],
-                "dist_fairlead": b.get("dist_fairlead", 30.0),
-                "dist_fiancata": b.get("dist_fiancata", 12.0),
-                "station": station_name
-            })
+            qty_unassigned = qty
+            while qty_unassigned > 0:
+                added = False
+                for b in best_b:
+                    b_id = b["id"]
+                    if bollard_usage[b_id] < bollard_caps[b_id] and qty_unassigned > 0:
+                        bollard_usage[b_id] += 1
+                        qty_unassigned -= 1
+                        added = True
+                        assigned_plan.append({
+                            "bollard_id": b["id"],
+                            "role": role,
+                            "azimut": b["azimut"],
+                            "slope": b["slope"],
+                            "swl": b["swl"],
+                            "max_calc_lines": bollard_caps[b["id"]],
+                            "dist_fairlead": b.get("dist_fairlead", 30.0),
+                            "dist_fiancata": b.get("dist_fiancata", 12.0),
+                            "station": station_name
+                        })
+                if not added:
+                    break
         return assigned_plan
 
     plan_fwd = assign_station_lines(fwd_bollards, target_fwd, "FWD")
@@ -254,24 +250,21 @@ def run_mooring_stress_analysis(plan, w_speed, w_rel):
     force_longitudinal = 0.02 * (w_speed ** 2) * np.abs(np.cos(wind_rad))
     
     active_lines = []
-    line_counter = 1
-    for item in plan:
-        for _ in range(item["qty"]):
-            mat_info = LINES_DATABASE[item["station"]]
-            active_lines.append({
-                "line_id": f"{item['station']}_{line_counter}",
-                "station": item["station"],
-                "bollard_id": item["bollard_id"],
-                "role": item["role"],
-                "azimut": item["azimut"],
-                "slope": item["slope"],
-                "dist_fairlead": item["dist_fairlead"],
-                "dist_fiancata": item["dist_fiancata"],
-                "swl_bollard": item["swl"],
-                "mbl": mat_info["MBL"],
-                "stiffness": mat_info["stiffness_factor"]
-            })
-            line_counter += 1
+    for idx, item in enumerate(plan, 1):
+        mat_info = LINES_DATABASE[item["station"]]
+        active_lines.append({
+            "line_id": f"{item['station']}_{idx}",
+            "station": item["station"],
+            "bollard_id": item["bollard_id"],
+            "role": item["role"],
+            "azimut": item["azimut"],
+            "slope": item["slope"],
+            "dist_fairlead": item["dist_fairlead"],
+            "dist_fiancata": item["dist_fiancata"],
+            "swl_bollard": item["swl"],
+            "mbl": mat_info["MBL"],
+            "stiffness": mat_info["stiffness_factor"]
+        })
             
     tot_stiff_x = sum([l["stiffness"] * np.cos(np.radians(l["azimut"])) for l in active_lines])
     tot_stiff_y = sum([l["stiffness"] * np.sin(np.radians(l["azimut"])) for l in active_lines])
@@ -324,39 +317,50 @@ col_f_sum, col_a_sum = st.columns(2)
 with col_f_sum:
     st.subheader("🚢 FORWARD MOORING STATION (Prua)")
     st.markdown(f"""
-    * **HEAD LINES:** `{fwd_counts.get('HEAD', 0)}` cavi
-    * **BREAST LINES:** `{fwd_counts.get('BREAST', 0)}` cavi
-    * **SPRING LINES:** `{fwd_counts.get('SPRING', 0)}` cavi
+    * **HEAD LINES:** `{fwd_counts.get('HEAD', 0)}` cavi (Minimo Safe: 2)
+    * **BREAST LINES:** `{fwd_counts.get('BREAST', 0)}` cavi (Minimo Safe: 2)
+    * **SPRING LINES:** `{fwd_counts.get('SPRING', 0)}` cavi (Minimo Safe: 2)
     * **TOTALE CAVI PRUA:** `{len(fwd_df)}`
     """)
 
 with col_a_sum:
     st.subheader("⚓ AFTER MOORING STATION (Poppa)")
     st.markdown(f"""
-    * **STERN LINES:** `{aft_counts.get('STERN', 0)}` cavi
-    * **BREAST LINES:** `{aft_counts.get('BREAST', 0)}` cavi
-    * **SPRING LINES:** `{aft_counts.get('SPRING', 0)}` cavi
+    * **STERN LINES:** `{aft_counts.get('STERN', 0)}` cavi (Minimo Safe: 2)
+    * **BREAST LINES:** `{aft_counts.get('BREAST', 0)}` cavi (Minimo Safe: 2)
+    * **SPRING LINES:** `{aft_counts.get('SPRING', 0)}` cavi (Minimo Safe: 2)
     * **TOTALE CAVI POPPA:** `{len(aft_df)}`
     """)
 
 st.markdown("---")
 st.subheader("📍 Disposizione Tattica Cavi e Limiti SWL Bitte")
 
+plan_df = pd.DataFrame(full_plan)
 plan_summary = []
-for p in full_plan:
-    status_str = f"🟢 PASSATI {p['qty']} CAVI ({p['role']})" if p['qty'] > 0 else "⚪ LASCIATA VUOTA (0 Cavi)"
-    plan_summary.append({
-        "Stazione": p["station"],
-        "Bitta Banchina": f"Bitta {p['station']} #{p['bollard_id']}",
-        "SWL Bitta (t)": p["swl"],
-        "Capienza Max Calcolata": f"{p['max_calc_lines']} Cavi",
-        "Stato Bitta": status_str,
-        "Numero Cavi Passati": p["qty"],
-        "Tipologia Cavo": p["role"] if p["qty"] > 0 else "N/A",
-        "Dist. Fairlead (m)": p["dist_fairlead"],
-        "Pendenza Cavo (°)": p["slope"],
-        "Azimut Bitta (°)": p["azimut"]
-    })
+
+for station_name in ["FWD", "AFT"]:
+    b_list = active_banchina[f"{station_name.lower()}_bollards"]
+    line_mbl = LINES_DATABASE[station_name]["MBL"]
+    
+    for b in b_list:
+        sub_p = plan_df[(plan_df["station"] == station_name) & (plan_df["bollard_id"] == b["id"])]
+        qty = len(sub_p)
+        roles = ", ".join(sub_p["role"].tolist()) if qty > 0 else "N/A"
+        calc_cap = calculate_bollard_max_lines(b["swl"], line_mbl)
+        status_str = f"🟢 PASSATI {qty} CAVI ({roles})" if qty > 0 else "⚪ LASCIATA VUOTA (0 Cavi)"
+        
+        plan_summary.append({
+            "Stazione": station_name,
+            "Bitta Banchina": f"Bitta {station_name} #{b['id']}",
+            "SWL Bitta (t)": b["swl"],
+            "Capienza Max Calcolata": f"{calc_cap} Cavi",
+            "Stato Bitta": status_str,
+            "Numero Cavi Passati": qty,
+            "Tipologia Cavi": roles,
+            "Dist. Fairlead (m)": b.get("dist_fairlead", 30.0),
+            "Pendenza Cavo (°)": b["slope"],
+            "Azimut Bitta (°)": b["azimut"]
+        })
 
 df_plan_view = pd.DataFrame(plan_summary)
 
