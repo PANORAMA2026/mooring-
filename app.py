@@ -30,7 +30,7 @@ if "berths_db" not in st.session_state:
             "aft_azimut": [30, 30, 0, 0, -20, -20], "aft_slope": [15, 15, 10, 10, 12, 12]
         },
         "Ensenada (MX)": {
-            "lat": 31.8578, "lon": -116.6058, "heading": 045, "swl": 80.0, "dist": 12.0,
+            "lat": 31.8578, "lon": -116.6058, "heading": 45, "swl": 80.0, "dist": 12.0,
             "fwd_azimut": [25, 25, 0, 0, -25, -25], "fwd_slope": [10, 10, 8, 8, 12, 12],
             "aft_azimut": [25, 25, 0, 0, -25, -25], "aft_slope": [12, 12, 8, 8, 10, 10]
         },
@@ -45,7 +45,7 @@ if "berths_db" not in st.session_state:
             "aft_azimut": [25, 25, 0, 0, -20, -20], "aft_slope": [13, 13, 8, 8, 10, 10]
         },
         "La Paz (MX)": {
-            "lat": 24.2520, "lon": -110.3200, "heading": 090, "swl": 75.0, "dist": 11.0,
+            "lat": 24.2520, "lon": -110.3200, "heading": 90, "swl": 75.0, "dist": 11.0,
             "fwd_azimut": [18, 18, 0, 0, -25, -25], "fwd_slope": [9, 9, 7, 7, 11, 11],
             "aft_azimut": [25, 25, 0, 0, -18, -18], "aft_slope": [11, 11, 7, 7, 9, 9]
         }
@@ -131,7 +131,7 @@ def get_realtime_weather(lat, lon, target_date, target_time):
         wind_gust = res["hourly"]["windgusts_10m"][target_hour]
         return float(wind_spd), float(wind_dir), float(wind_gust)
     except Exception:
-        # Fallback predefinito se l'API non risponde o la data è oltre il limite forecast
+        # Fallback predefinito se l'API non risponde
         return 18.0, 240.0, 25.0
 
 active_banchina = st.session_state.berths_db[selected_port]
@@ -152,7 +152,7 @@ else:
 wind_relative = (wind_dir_true - active_banchina["heading"]) % 360
 
 # ==========================================
-# 5. MOTORE DI CALCOLO stress & MEG4
+# 5. MOTORE DI CALCOLO STRESS & MEG4
 # ==========================================
 st.sidebar.header("⚙️ 3. Cavi Attivi in Servizio")
 fwd_active_count = st.sidebar.number_input("Cavi FWD In Uso", 3, 6, 4)
@@ -255,7 +255,7 @@ with col_res2:
     st.metric("Vento Max Sostenibile (Safety Limit 55% MBL)", f"{int(w_limit - 1)} Nodi")
 
 # ==========================================
-# 7. MATRICE SENSIVITA' VENTO (WHAT-IF)
+# 7. MATRICE SENSIBILITÀ VENTO (WHAT-IF)
 # ==========================================
 st.subheader("📈 Matrice di Aumento Resistenza Vento (+1 Cavo Extra)")
 
@@ -264,12 +264,7 @@ col_b, col_s, col_h = st.columns(3)
 def evaluate_extra_line(line_type):
     w = wind_speed
     while True:
-        # Calcolo di prova con un cavo aggiuntivo
         wind_rad = np.radians(wind_relative)
-        f_tr = 0.05 * (w ** 2) * np.abs(np.sin(wind_rad))
-        f_ln = 0.02 * (w ** 2) * np.abs(np.cos(wind_rad))
-        
-        # Stima sollecitudine distribuita
         df_t, _ = calculate_mooring_stresses(w, wind_relative)
         max_pct = df_t["% MBL"].max() * (len(df_results) / (len(df_results) + 1))
         
